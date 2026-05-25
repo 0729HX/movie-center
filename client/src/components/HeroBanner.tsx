@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback, useRef, type FC } from 'react'
 import type { MediaWithRatings } from '../types'
 import RatingBadge from './RatingBadge'
+import { useDetail } from '../context/hooks'
 
 interface Props {
   items: MediaWithRatings[]
-  onSelect: (item: MediaWithRatings) => void
 }
 
 const AUTO_INTERVAL = 6000
 
-const HeroBanner: FC<Props> = ({ items, onSelect }) => {
+const HeroBanner: FC<Props> = ({ items }) => {
+  const { handleSelect } = useDetail()
   const [current, setCurrent] = useState(0)
   const [transitioning, setTransitioning] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -70,7 +71,7 @@ const HeroBanner: FC<Props> = ({ items, onSelect }) => {
     <div className="hero-section">
       <div
         className="hero-banner"
-        onClick={() => onSelect(item)}
+        onClick={() => handleSelect(item)}
         style={{ cursor: 'pointer' }}
       >
         {item.backdropPath ? (

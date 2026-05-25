@@ -1,12 +1,9 @@
-import { useRef, useEffect, type FC } from 'react'
+import { useRef, useEffect, memo, type FC } from 'react'
 import type { MediaWithRatings } from '../types'
 import PosterCard from './PosterCard'
 
 interface Props {
   items: MediaWithRatings[]
-  onSelect: (item: MediaWithRatings) => void
-  onSaveLocal?: (item: MediaWithRatings) => void
-  onRemoveLocal?: (item: MediaWithRatings) => void
   loading?: boolean
   title?: string
   hasMore?: boolean
@@ -16,12 +13,17 @@ interface Props {
   activeGenre?: string
   onGenreChange?: (genreId: string) => void
   onClear?: () => void
+  highlightQuery?: string
+  emptyTitle?: string
+  emptyDesc?: string
+  resultCount?: number
 }
 
 const PosterWall: FC<Props> = ({
-  items, onSelect, onSaveLocal, onRemoveLocal, loading, title,
+  items, loading, title,
   hasMore, onLoadMore, loadingMore,
   genres, activeGenre, onGenreChange, onClear,
+  highlightQuery, emptyTitle, emptyDesc, resultCount,
 }) => {
   const sentinelRef = useRef<HTMLDivElement>(null)
 
@@ -43,7 +45,6 @@ const PosterWall: FC<Props> = ({
     return () => observer.disconnect()
   }, [hasMore, onLoadMore, loadingMore])
 
-  // 切换分类时重置：首次加载且项目不足一屏时，哨兵天然可见，跳过首次触发
   const itemCount = items.length
 
   return (
@@ -56,22 +57,14 @@ const PosterWall: FC<Props> = ({
         padding: '0 var(--content-padding)',
         marginBottom: 20,
       }}>
-        <h2 className="section-title" style={{ margin: 0, padding: 0 }}>{title}</h2>
+        <h2 className="section-title" style={{ margin: 0, padding: 0 }}>
+          {title}
+          {resultCount !== undefined && resultCount > 0 && (
+            <span className="search-result-count"> · {resultCount} 个结果</span>
+          )}
+        </h2>
         {onClear && (
-          <button
-            onClick={onClear}
-            style={{
-              fontSize: 13,
-              color: 'var(--accent)',
-              cursor: 'pointer',
-              background: 'none',
-              border: 'none',
-              fontWeight: 500,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
+          <button className="btn-clear-search" onClick={onClear}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
@@ -82,42 +75,18 @@ const PosterWall: FC<Props> = ({
 
       {/* 分类筛选条 */}
       {genres && genres.length > 0 && onGenreChange && (
-        <div className="scroll-row" style={{ marginBottom: 20, gap: 8 }}>
+        <div className="genre-filter" style={{ marginBottom: 20 }}>
           <button
+            className={`genre-pill${activeGenre === '' ? ' active' : ''}`}
             onClick={() => onGenreChange('')}
-            style={{
-              flexShrink: 0,
-              padding: '7px 18px',
-              borderRadius: 20,
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-              background: activeGenre === '' ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-              color: activeGenre === '' ? '#fff' : 'var(--text-secondary)',
-              border: activeGenre === '' ? 'none' : '1px solid rgba(255,255,255,0.08)',
-              transition: 'all 0.2s ease',
-              letterSpacing: '0.01em',
-            }}
           >
             全部
           </button>
           {genres.map(g => (
             <button
               key={g.id}
+              className={`genre-pill${activeGenre === String(g.id) ? ' active' : ''}`}
               onClick={() => onGenreChange(String(g.id))}
-              style={{
-                flexShrink: 0,
-                padding: '7px 18px',
-                borderRadius: 20,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                background: activeGenre === String(g.id) ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-                color: activeGenre === String(g.id) ? '#fff' : 'var(--text-secondary)',
-                border: activeGenre === String(g.id) ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                transition: 'all 0.2s ease',
-                letterSpacing: '0.01em',
-              }}
             >
               {g.name}
             </button>
@@ -135,8 +104,8 @@ const PosterWall: FC<Props> = ({
       ) : items.length === 0 ? (
         <div className="local-empty">
           <div className="empty-icon">🎬</div>
-          <div className="empty-title">暂无内容</div>
-          <div className="empty-desc">换个分类看看吧</div>
+          <div className="empty-title">{emptyTitle || '暂无内容'}</div>
+          <div className="empty-desc">{emptyDesc || '换个分类看看吧'}</div>
         </div>
       ) : (
         <>
@@ -144,27 +113,21 @@ const PosterWall: FC<Props> = ({
             {items.map((item, index) => (
               <div
                 key={`${item.mediaType}-${item.tmdbId}-${item.id}`}
-                style={{
-                  animation: `fadeInUp 0.4s var(--ease-out-expo) ${Math.min(index * 0.04, 0.4)}s both`,
-                }}
+                className="stagger-item"
+                style={{ '--stagger-index': Math.min(index, 10) } as React.CSSProperties}
               >
-                <PosterCard
-                  item={item}
-                  onSelect={onSelect}
-                  onSaveLocal={onSaveLocal}
-                  onRemoveLocal={onRemoveLocal}
-                />
+                <PosterCard item={item} highlightQuery={highlightQuery} />
               </div>
             ))}
           </div>
 
           {/* 哨兵 — 滚动到此自动加载 */}
           {hasMore && onLoadMore && (
-            <div ref={sentinelRef} style={{ textAlign: 'center', padding: '32px 0' }}>
+            <div ref={sentinelRef} className="load-more-sentinel">
               {loadingMore ? (
-                <span style={{ fontSize: 14, color: 'var(--text-tertiary)' }}>加载中...</span>
+                <span className="load-more-text">加载中...</span>
               ) : (
-                <span style={{ fontSize: 14, color: 'var(--text-tertiary)' }}>
+                <span className="load-more-text">
                   {itemCount} / {itemCount + (hasMore ? 20 : 0)} 部
                 </span>
               )}
@@ -173,9 +136,7 @@ const PosterWall: FC<Props> = ({
 
           {/* 全部加载完 */}
           {!hasMore && items.length > 0 && (
-            <div style={{ textAlign: 'center', padding: '32px 0' }}>
-              <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>— 已加载全部 {items.length} 部 —</span>
-            </div>
+            <div className="all-loaded-text">— 已加载全部 {items.length} 部 —</div>
           )}
         </>
       )}
@@ -183,4 +144,15 @@ const PosterWall: FC<Props> = ({
   )
 }
 
-export default PosterWall
+export default memo(PosterWall, (prev, next) =>
+  prev.title === next.title
+  && prev.loading === next.loading
+  && prev.loadingMore === next.loadingMore
+  && prev.hasMore === next.hasMore
+  && prev.activeGenre === next.activeGenre
+  && prev.items.length === next.items.length
+  && (prev.items.length === 0 || prev.items[0].tmdbId === next.items[0].tmdbId)
+  && prev.onLoadMore === next.onLoadMore
+  && prev.onGenreChange === next.onGenreChange
+  && prev.onClear === next.onClear
+)

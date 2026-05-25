@@ -1,17 +1,14 @@
-import { useRef, useState, useEffect, type FC } from 'react'
+import { useRef, useState, useEffect, memo, type FC } from 'react'
 import type { MediaWithRatings } from '../types'
 import PosterCard from './PosterCard'
 
 interface Props {
   title: string
   items: MediaWithRatings[]
-  onSelect: (item: MediaWithRatings) => void
-  onSaveLocal?: (item: MediaWithRatings) => void
-  onRemoveLocal?: (item: MediaWithRatings) => void
   loading?: boolean
 }
 
-const MovieRow: FC<Props> = ({ title, items, onSelect, onSaveLocal, onRemoveLocal, loading }) => {
+const MovieRow: FC<Props> = ({ title, items, loading }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canScrollRight, setCanScrollRight] = useState(false)
 
@@ -42,37 +39,25 @@ const MovieRow: FC<Props> = ({ title, items, onSelect, onSaveLocal, onRemoveLoca
             {items.map((item, index) => (
               <div
                 key={`${item.mediaType}-${item.tmdbId}`}
-                style={{
-                  animation: `fadeInUp 0.4s var(--ease-out-expo) ${Math.min(index * 0.05, 0.5)}s both`,
-                }}
+                className="stagger-item"
+                style={{ '--stagger-index': Math.min(index, 10) } as React.CSSProperties}
               >
-                <PosterCard
-                  item={item}
-                  onSelect={onSelect}
-                  onSaveLocal={onSaveLocal}
-                  onRemoveLocal={onRemoveLocal}
-                />
+                <PosterCard item={item} />
               </div>
             ))}
           </div>
 
           {/* 右侧渐变遮罩（提示可滚动） */}
-          {canScrollRight && (
-            <div style={{
-              position: 'absolute',
-              top: 0,
-              right: 0,
-              bottom: 8,
-              width: 80,
-              background: 'linear-gradient(90deg, transparent, var(--bg-primary))',
-              pointerEvents: 'none',
-              zIndex: 1,
-            }} />
-          )}
+          {canScrollRight && <div className="scroll-row-fade" />}
         </div>
       )}
     </div>
   )
 }
 
-export default MovieRow
+export default memo(MovieRow, (prev, next) =>
+  prev.title === next.title
+  && prev.loading === next.loading
+  && prev.items.length === next.items.length
+  && (prev.items.length === 0 || prev.items[0].tmdbId === next.items[0].tmdbId)
+)

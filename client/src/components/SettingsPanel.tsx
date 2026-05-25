@@ -12,18 +12,8 @@ interface Settings {
 }
 
 const SectionHeading: FC<{ icon: string; title: string }> = ({ icon, title }) => (
-  <h3 style={{
-    fontSize: 16,
-    fontWeight: 700,
-    marginBottom: 18,
-    marginTop: 36,
-    color: 'var(--text-primary)',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    letterSpacing: '-0.01em',
-  }}>
-    <span style={{ fontSize: 18 }}>{icon}</span>
+  <h3 className="settings-section-heading">
+    <span className="settings-section-icon">{icon}</span>
     {title}
   </h3>
 )
@@ -203,45 +193,19 @@ const SettingsPanel: FC = () => {
       </div>
 
       {/* 监控状态 */}
-      <div style={{
-        display: 'flex',
-        gap: 12,
-        alignItems: 'center',
-        marginBottom: 20,
-        padding: '12px 16px',
-        background: 'rgba(255,255,255,0.03)',
-        borderRadius: 12,
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}>
-        <span style={{
-          display: 'inline-block',
-          width: 10,
-          height: 10,
-          borderRadius: '50%',
-          background: watcherActive ? '#30d158' : '#8e8e93',
-          boxShadow: watcherActive ? '0 0 8px rgba(48,209,88,0.4)' : 'none',
-        }} />
-        <span style={{ fontSize: 14, color: 'var(--text-secondary)', flex: 1 }}>
+      <div className="watcher-status">
+        <span className={`watcher-dot${watcherActive ? ' active' : ''}`} />
+        <span className="watcher-label">
           文件监控: {watcherActive ? '运行中' : '已停止'}
         </span>
         <button
+          className={`watcher-toggle-btn ${watcherActive ? 'stop' : 'start'}`}
           onClick={toggleWatcher}
-          style={{
-            padding: '7px 18px',
-            fontSize: 13,
-            fontWeight: 600,
-            borderRadius: 8,
-            border: 'none',
-            cursor: 'pointer',
-            background: watcherActive ? '#ff453a' : 'var(--accent)',
-            color: '#fff',
-            transition: 'all 0.2s ease',
-          }}
         >
           {watcherActive ? '停止监控' : '启动监控'}
         </button>
       </div>
-      {watcherMsg && <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>{watcherMsg}</p>}
+      {watcherMsg && <p className="watcher-msg">{watcherMsg}</p>}
 
       <button className="settings-save-btn" onClick={handleSave}>
         保存设置

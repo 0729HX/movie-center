@@ -1,12 +1,21 @@
-import { type FC, useState, useEffect } from 'react'
+import { type FC, useState, useEffect, useMemo, useCallback } from 'react'
 import type { LocalMedia, MediaWithRatings } from '../types'
+import { useApp, useDetail } from '../context/hooks'
 
 interface Props {
   items: LocalMedia[]
-  onSelect: (item: MediaWithRatings) => void
-  onRefresh: () => void
   loading: boolean
 }
+
+type SortField = 'added_at' | 'title' | 'year' | 'file_size'
+type SortDir = 'asc' | 'desc'
+
+const sortOptions: { key: SortField; label: string }[] = [
+  { key: 'added_at', label: '添加时间' },
+  { key: 'title', label: '标题' },
+  { key: 'year', label: '年份' },
+  { key: 'file_size', label: '文件大小' },
+]
 
 const formatSize = (bytes: number) => {
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`
@@ -14,16 +23,44 @@ const formatSize = (bytes: number) => {
   return ''
 }
 
-const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
+const LocalMediaView: FC<Props> = ({ items, loading }) => {
+  const { fetchLocal } = useApp()
+  const { handleSelect } = useDetail()
   const [scanPath, setScanPath] = useState('')
   const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
   const [typeFilter, setTypeFilter] = useState<'all' | 'movie' | 'tv'>('all')
+  const [textFilter, setTextFilter] = useState('')
+  const [sortField, setSortField] = useState<SortField>('added_at')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
 
-  const filteredItems = typeFilter === 'all'
-    ? items
-    : items.filter(i => i.media_type === typeFilter)
+  // 批量操作
+  const [batchMode, setBatchMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchDeleting, setBatchDeleting] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+
+  // 筛选 + 排序（单次 useMemo）
+  const displayItems = useMemo(() => {
+    let result = items
+    // 类型筛选
+    if (typeFilter !== 'all') result = result.filter(i => i.media_type === typeFilter)
+    // 文本筛选
+    if (textFilter.trim()) {
+      const q = textFilter.toLowerCase()
+      result = result.filter(i => i.title.toLowerCase().includes(q))
+    }
+    // 排序
+    result = [...result].sort((a, b) => {
+      const aVal = a[sortField]
+      const bVal = b[sortField]
+      if (typeof aVal === 'string' && typeof bVal === 'string') return aVal.localeCompare(bVal)
+      return (aVal as number) - (bVal as number)
+    })
+    if (sortDir === 'desc') result.reverse()
+    return result
+  }, [items, typeFilter, textFilter, sortField, sortDir])
 
   const movieCount = items.filter(i => i.media_type === 'movie').length
   const tvCount = items.filter(i => i.media_type === 'tv').length
@@ -31,9 +68,7 @@ const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
   useEffect(() => {
     fetch('/api/config')
       .then(r => r.json())
-      .then(cfg => {
-        if (cfg.media_root) setScanPath(cfg.media_root)
-      })
+      .then(cfg => { if (cfg.media_root) setScanPath(cfg.media_root) })
       .catch(() => {})
   }, [])
 
@@ -53,7 +88,7 @@ const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
       if (data.skipped) parts.push(`跳过 ${data.skipped}`)
       if (data.errors?.length) parts.push(`错误 ${data.errors.length}`)
       setScanResult(`扫描完成：${parts.join('，')}` + (data.message ? `\n${data.message}` : ''))
-      onRefresh()
+      fetchLocal()
     } catch {
       setScanResult('扫描失败')
     } finally {
@@ -66,10 +101,19 @@ const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
     setDeleting(id)
     await fetch(`/api/local/${id}`, { method: 'DELETE' })
     setDeleting(null)
-    onRefresh()
+    fetchLocal()
+  }
+
+  const handlePlay = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    await fetch(`/api/local/play/${id}`, { method: 'POST' }).catch(() => {})
   }
 
   const handleItemClick = (item: LocalMedia) => {
+    if (batchMode) {
+      toggleSelect(item.id)
+      return
+    }
     const mediaItem: MediaWithRatings = {
       id: item.id,
       tmdbId: item.tmdb_id,
@@ -87,7 +131,54 @@ const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
       localPath: item.local_path,
       localId: item.id,
     }
-    onSelect(mediaItem)
+    handleSelect(mediaItem)
+  }
+
+  // 批量操作
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === displayItems.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(displayItems.map(i => i.id)))
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    setBatchDeleting(true)
+    setShowConfirm(false)
+    // 乐观 UI：先从本地 state 移除
+    const idsToDelete = [...selectedIds]
+    setSelectedIds(new Set())
+    setBatchMode(false)
+    try {
+      await Promise.all(idsToDelete.map(id =>
+        fetch(`/api/local/${id}`, { method: 'DELETE' })
+      ))
+      fetchLocal()
+    } catch {
+      fetchLocal() // 失败时 refetch
+    } finally {
+      setBatchDeleting(false)
+    }
+  }
+
+  const enterBatchMode = () => {
+    setBatchMode(true)
+    setSelectedIds(new Set())
+  }
+
+  const cancelBatchMode = () => {
+    setBatchMode(false)
+    setSelectedIds(new Set())
   }
 
   return (
@@ -96,60 +187,18 @@ const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
 
       {/* 扫描区 */}
       <div style={{ padding: '0 var(--content-padding)', marginBottom: 32 }}>
-        <div style={{
-          display: 'flex',
-          gap: 12,
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          padding: '16px',
-          background: 'rgba(255,255,255,0.03)',
-          borderRadius: 14,
-          border: '1px solid rgba(255,255,255,0.06)',
-        }}>
+        <div className="scan-container">
           <input
+            className="scan-input"
             type="text"
             placeholder="输入媒体目录路径，如 D:/media/movies"
             value={scanPath}
             onChange={e => setScanPath(e.target.value)}
-            style={{
-              flex: 1,
-              minWidth: 280,
-              padding: '10px 14px',
-              fontSize: 14,
-              background: 'var(--bg-card)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 10,
-              color: 'var(--text-primary)',
-              fontFamily: 'inherit',
-              outline: 'none',
-              transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-            }}
-            onFocus={e => {
-              e.currentTarget.style.borderColor = 'var(--accent)'
-              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0,113,227,0.12)'
-            }}
-            onBlur={e => {
-              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
           />
           <button
+            className="scan-btn"
             onClick={handleScan}
             disabled={scanning}
-            style={{
-              padding: '10px 24px',
-              background: scanning ? 'var(--text-tertiary)' : 'var(--accent)',
-              color: '#fff',
-              fontSize: 14,
-              fontWeight: 600,
-              borderRadius: 10,
-              border: 'none',
-              cursor: scanning ? 'default' : 'pointer',
-              transition: 'all 0.2s ease',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
           >
             {scanning ? (
               '扫描中...'
@@ -166,47 +215,73 @@ const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
           </button>
         </div>
         {scanResult && (
-          <p style={{
-            marginTop: 10,
-            fontSize: 13,
-            color: scanResult.includes('失败') ? '#ff453a' : 'var(--text-secondary)',
-            padding: '0 16px',
-            whiteSpace: 'pre-line',
-            lineHeight: 1.6,
-          }}>
+          <p className={`scan-result${scanResult.includes('失败') ? ' error' : ''}`}>
             {scanResult}
           </p>
         )}
       </div>
 
-      {/* 分类筛选标签 */}
+      {/* 筛选 + 排序工具栏 */}
       {items.length > 0 && !loading && (
-        <div className="scroll-row" style={{ marginBottom: 24, gap: 8, padding: '0 var(--content-padding)' }}>
-          {([
-            { key: 'all' as const, label: '全部', count: items.length },
-            { key: 'movie' as const, label: '电影', count: movieCount },
-            { key: 'tv' as const, label: '剧集', count: tvCount },
-          ]).map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setTypeFilter(tab.key)}
-              style={{
-                flexShrink: 0,
-                padding: '7px 18px',
-                borderRadius: 20,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                background: typeFilter === tab.key ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-                color: typeFilter === tab.key ? '#fff' : 'var(--text-secondary)',
-                border: typeFilter === tab.key ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                transition: 'all 0.2s ease',
-                letterSpacing: '0.01em',
-              }}
-            >
-              {tab.label} ({tab.count})
-            </button>
-          ))}
+        <div style={{ padding: '0 var(--content-padding)', marginBottom: 24 }}>
+          {/* 类型筛选 */}
+          <div className="genre-filter" style={{ marginBottom: 12 }}>
+            {([
+              { key: 'all' as const, label: '全部', count: items.length },
+              { key: 'movie' as const, label: '电影', count: movieCount },
+              { key: 'tv' as const, label: '剧集', count: tvCount },
+            ]).map(tab => (
+              <button
+                key={tab.key}
+                className={`genre-pill${typeFilter === tab.key ? ' active' : ''}`}
+                onClick={() => setTypeFilter(tab.key)}
+              >
+                {tab.label} ({tab.count})
+              </button>
+            ))}
+
+            {/* 批量模式切换 */}
+            {!batchMode ? (
+              <button className="genre-pill batch-select-all-btn" onClick={enterBatchMode}>
+                批量管理
+              </button>
+            ) : (
+              <>
+                <button className="genre-pill batch-select-all-btn" onClick={toggleSelectAll}>
+                  {selectedIds.size === displayItems.length ? '取消全选' : '全选'}
+                </button>
+                <button className="genre-pill" onClick={cancelBatchMode}>
+                  取消
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* 文本筛选 + 排序 */}
+          <div className="sort-toolbar">
+            <input
+              className="local-search-input"
+              type="text"
+              placeholder="按标题筛选..."
+              value={textFilter}
+              onChange={e => setTextFilter(e.target.value)}
+            />
+            <div className="sort-controls">
+              {sortOptions.map(opt => (
+                <button
+                  key={opt.key}
+                  className={`genre-pill${sortField === opt.key ? ' active' : ''}`}
+                  onClick={() => {
+                    if (sortField === opt.key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+                    else { setSortField(opt.key); setSortDir('desc') }
+                  }}
+                >
+                  {opt.label}
+                  {sortField === opt.key && (sortDir === 'asc' ? ' ↑' : ' ↓')}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -227,17 +302,17 @@ const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
           <div className="empty-title">还没有本地影视</div>
           <div className="empty-desc">输入媒体目录路径并点击扫描，或从 TMDB 中收藏到本地</div>
         </div>
-      ) : filteredItems.length === 0 ? (
+      ) : displayItems.length === 0 ? (
         <div className="local-empty">
           <div className="empty-icon" style={{ fontSize: 48, opacity: 0.4 }}>
             {typeFilter === 'movie' ? '🎬' : '📺'}
           </div>
-          <div className="empty-title">暂无{typeFilter === 'movie' ? '电影' : '剧集'}</div>
-          <div className="empty-desc">该分类下还没有内容，请先扫描目录</div>
+          <div className="empty-title">暂无匹配内容</div>
+          <div className="empty-desc">试试调整筛选条件</div>
         </div>
       ) : (
         <div className="poster-grid">
-          {filteredItems.map((item, index) => {
+          {displayItems.map((item, index) => {
             const posterUrl = item.poster_path
               ? `/api/local/file?path=${encodeURIComponent(item.poster_path!)}`
               : null
@@ -248,11 +323,44 @@ const LocalMediaView: FC<Props> = ({ items, onSelect, onRefresh, loading }) => {
                 posterUrl={posterUrl}
                 index={index}
                 deleting={deleting === item.id}
+                batchMode={batchMode}
+                selected={selectedIds.has(item.id)}
                 onSelect={() => handleItemClick(item)}
                 onDelete={(e) => handleDelete(item.id, e)}
+                onPlay={(e) => handlePlay(item.id, e)}
               />
             )
           })}
+        </div>
+      )}
+
+      {/* 批量操作浮动栏 */}
+      {batchMode && selectedIds.size > 0 && (
+        <div className="batch-toolbar">
+          <span className="batch-toolbar-count">已选 {selectedIds.size} 项</span>
+          <button
+            className="batch-toolbar-delete"
+            onClick={() => setShowConfirm(true)}
+            disabled={batchDeleting}
+          >
+            {batchDeleting ? '删除中...' : '删除选中'}
+          </button>
+        </div>
+      )}
+
+      {/* 批量删除确认弹窗 */}
+      {showConfirm && (
+        <div className="batch-confirm-backdrop" onClick={() => setShowConfirm(false)}>
+          <div className="batch-confirm-dialog" onClick={e => e.stopPropagation()}>
+            <div className="batch-confirm-title">确认删除</div>
+            <div className="batch-confirm-msg">
+              确定要删除已选的 {selectedIds.size} 项本地影视吗？此操作不可撤销。
+            </div>
+            <div className="batch-confirm-actions">
+              <button className="genre-pill" onClick={() => setShowConfirm(false)}>取消</button>
+              <button className="batch-toolbar-delete" onClick={handleBatchDelete}>确认删除</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -265,27 +373,25 @@ const LocalCard: FC<{
   posterUrl: string | null
   index: number
   deleting: boolean
+  batchMode: boolean
+  selected: boolean
   onSelect: () => void
   onDelete: (e: React.MouseEvent) => void
-}> = ({ item, posterUrl, index, deleting, onSelect, onDelete }) => {
+  onPlay: (e: React.MouseEvent) => void
+}> = ({ item, posterUrl, index, deleting, batchMode, selected, onSelect, onDelete, onPlay }) => {
   const [imgError, setImgError] = useState(false)
-  const [hovered, setHovered] = useState(false)
 
   return (
     <div
-      className="poster-card"
+      className={`poster-card stagger-item${selected ? ' local-card-selected' : ''}`}
       onClick={onSelect}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        animation: `fadeInUp 0.4s var(--ease-out-expo) ${Math.min(index * 0.04, 0.5)}s both`,
-      }}
+      style={{ '--stagger-index': Math.min(index, 10) } as React.CSSProperties}
     >
       {/* 海报图区 */}
-      <div style={{ position: 'relative', overflow: 'hidden' }}>
+      <div className="poster-card-img-wrap">
         {posterUrl && !imgError ? (
           <img
-            className="poster-img"
+            className="poster-img loaded"
             src={posterUrl}
             alt={item.title}
             loading="lazy"
@@ -293,66 +399,41 @@ const LocalCard: FC<{
           />
         ) : (
           <div className="poster-placeholder" style={{ flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 32, opacity: 0.3 }}>
+            <span className="poster-placeholder-icon">
               {item.media_type === 'movie' ? '🎬' : '📺'}
             </span>
-            <span style={{ opacity: 0.5, fontSize: 13, fontWeight: 600 }}>{item.title}</span>
+            <span className="poster-placeholder-title">{item.title}</span>
           </div>
         )}
 
         {/* hover 叠加层 — 显示文件信息 */}
-        <div style={{
-          position: 'absolute', inset: 0,
-          background: 'linear-gradient(180deg, transparent 30%, rgba(0,0,0,0.88) 100%)',
-          opacity: hovered ? 1 : 0,
-          transition: 'opacity 0.35s ease',
-          pointerEvents: 'none',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'flex-end',
-          padding: 14,
-        }}>
-          <p style={{
-            color: 'rgba(255,255,255,0.85)',
-            fontSize: 11,
-            lineHeight: 1.5,
-            margin: 0,
-            fontFamily: 'ui-monospace, "Cascadia Code", monospace',
-            wordBreak: 'break-all',
-          }}>
+        <div className="local-card-overlay">
+          <p className="local-card-filename">
             {item.local_path?.split(/[/\\]/).pop() || item.local_path}
           </p>
           {item.file_size > 0 && (
-            <p style={{
-              color: 'var(--text-tertiary)',
-              fontSize: 11,
-              margin: '4px 0 0',
-            }}>
+            <p className="local-card-filesize">
               {formatSize(item.file_size)}
             </p>
           )}
         </div>
 
-        {/* 删除按钮 — 毛玻璃风格 */}
+        {/* 播放按钮 */}
         <button
+          className="local-card-play-btn"
+          onClick={onPlay}
+          title="播放"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+        </button>
+
+        {/* 删除按钮 */}
+        <button
+          className={`local-card-delete-btn${deleting ? ' deleting' : ''}`}
           onClick={onDelete}
           disabled={deleting}
-          style={{
-            position: 'absolute', top: 8, right: 8,
-            width: 34, height: 34, borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 13,
-            background: 'rgba(0,0,0,0.55)',
-            color: '#ff453a',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            border: '1px solid rgba(255,69,58,0.25)',
-            cursor: deleting ? 'default' : 'pointer',
-            transition: 'all 0.3s var(--ease-spring)',
-            zIndex: 2,
-            opacity: hovered || deleting ? 1 : 0,
-            transform: hovered || deleting ? 'scale(1)' : 'scale(0.8)',
-          }}
           title="移除"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
@@ -360,6 +441,15 @@ const LocalCard: FC<{
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
           </svg>
         </button>
+
+        {/* 批量选择复选框 */}
+        {batchMode && (
+          <div className={`local-card-checkbox${selected ? ' checked' : ''}`}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              {selected ? <polyline points="20 6 9 17 4 12" /> : null}
+            </svg>
+          </div>
+        )}
       </div>
 
       {/* 信息区 */}

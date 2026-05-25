@@ -26,39 +26,17 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: '100vh',
-          background: '#000',
-          color: '#f5f5f7',
-          padding: 40,
-          textAlign: 'center',
-          fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif',
-        }}>
-          <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.6 }}>🤷</div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8, letterSpacing: '-0.02em' }}>
-            页面渲染出错
-          </h2>
-          <p style={{ color: '#86868b', fontSize: 14, marginBottom: 24, maxWidth: 400, lineHeight: 1.6 }}>
+        <div className="error-boundary">
+          <div className="error-boundary-icon">🤷</div>
+          <h2 className="error-boundary-title">页面渲染出错</h2>
+          <p className="error-boundary-msg">
             {this.state.error?.message || '未知错误'}
           </p>
           <button
+            className="error-boundary-btn"
             onClick={() => {
               this.setState({ hasError: false, error: null })
               window.location.reload()
-            }}
-            style={{
-              background: '#0071e3',
-              color: '#fff',
-              border: 'none',
-              padding: '10px 24px',
-              borderRadius: 10,
-              fontSize: 15,
-              fontWeight: 600,
-              cursor: 'pointer',
             }}
           >
             刷新页面

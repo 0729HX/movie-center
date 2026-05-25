@@ -567,7 +567,7 @@ export async function getTv(page: number = 1, genre?: string, liveCount: number 
 }
 
 // === 4. 搜索 ===
-export async function searchMedia(query: string, page: number = 1): Promise<MediaWithRatings[]> {
+export async function searchMedia(query: string, page: number = 1): Promise<{ items: MediaWithRatings[]; totalPages: number; totalResults: number }> {
   const data = await tmdbGet<TmdbPaginated<TmdbMovie | TmdbTv>>('/search/multi', { query, page });
   const items = data.results
     .filter(item => item.media_type === 'movie' || item.media_type === 'tv')
@@ -578,7 +578,7 @@ export async function searchMedia(query: string, page: number = 1): Promise<Medi
   // 标记本地已收藏的
   await markLocalItems(items);
 
-  return items;
+  return { items, totalPages: data.total_pages, totalResults: data.total_results };
 }
 
 // === 5. 影视详情（带全量外部评分） ===

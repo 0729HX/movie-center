@@ -64,7 +64,7 @@ async function preCacheAllLocalDetails(items: any[]) {
           try {
             let searchText = item.title;
             if (item.year) searchText += ` ${item.year}`;
-            const results = await searchMedia(searchText, 1);
+            const { items: results } = await searchMedia(searchText, 1);
 
             const match = results.find((r: any) => {
               const titleMatch = r.title.toLowerCase() === item.title.toLowerCase();
@@ -219,7 +219,7 @@ router.get('/detail/:id', async (req, res) => {
     if (!detail) {
       let searchText = local.title;
       if (local.year) searchText += ` ${local.year}`;
-      const results = await searchMedia(searchText, 1);
+      const { items: results } = await searchMedia(searchText, 1);
 
       const match = results.find((r: any) => {
         const titleMatch = r.title.toLowerCase() === local.title.toLowerCase();

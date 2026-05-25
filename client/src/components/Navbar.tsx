@@ -1,121 +1,118 @@
-import { useState, useEffect, type FC } from 'react'
-
-type Page = 'trending' | 'movies' | 'tv' | 'local' | 'settings'
+import { useState, useEffect, useCallback, useRef, type FC } from 'react'
+import { useLocation } from 'react-router-dom'
 
 interface Props {
-  currentPage: Page
-  onPageChange: (page: Page) => void
   onSearch: (q: string) => void
+  onPageChange: (page: string) => void
 }
 
-const Navbar: FC<Props> = ({ currentPage, onPageChange, onSearch }) => {
+const navItems = [
+  { path: '/', label: '首页', icon: '🏠' },
+  { path: '/movies', label: '电影', icon: '🎬' },
+  { path: '/tv', label: '剧集', icon: '📺' },
+  { path: '/local', label: '本地影视', icon: '💾' },
+  { path: '/settings', label: '设置', icon: '⚙' },
+]
+
+const SEARCH_HISTORY_KEY = 'search_history'
+const MAX_HISTORY = 5
+
+function loadHistory(): string[] {
+  try { return JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || '[]') } catch { return [] }
+}
+
+function saveHistory(items: string[]) {
+  localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(items))
+}
+
+const Navbar: FC<Props> = ({ onSearch, onPageChange }) => {
   const [searchText, setSearchText] = useState('')
   const [scrolled, setScrolled] = useState(false)
   const [searchFocused, setSearchFocused] = useState(false)
+  const [history, setHistory] = useState<string[]>(loadHistory)
+  const location = useLocation()
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 20)
-    }
+    const handleScroll = () => setScrolled(window.scrollY > 20)
     window.addEventListener('scroll', handleScroll, { passive: true })
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
-  const handleSearch = (e: React.FormEvent) => {
+  // 防抖搜索
+  useEffect(() => {
+    if (!searchText.trim()) return
+    debounceRef.current = setTimeout(() => {
+      onSearch(searchText)
+      addToHistory(searchText)
+    }, 300)
+    return () => clearTimeout(debounceRef.current)
+  }, [searchText]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addToHistory = useCallback((query: string) => {
+    if (!query.trim()) return
+    setHistory(prev => {
+      const next = [query, ...prev.filter(h => h !== query)].slice(0, MAX_HISTORY)
+      saveHistory(next)
+      return next
+    })
+  }, [])
+
+  const clearHistory = useCallback(() => {
+    setHistory([])
+    localStorage.removeItem(SEARCH_HISTORY_KEY)
+  }, [])
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!searchText.trim()) return
+    clearTimeout(debounceRef.current)
     onSearch(searchText)
+    addToHistory(searchText)
+    setSearchFocused(false)
   }
 
-  const navItems: { key: Page; label: string; icon: string }[] = [
-    { key: 'trending', label: '首页', icon: '🏠' },
-    { key: 'movies', label: '电影', icon: '🎬' },
-    { key: 'tv', label: '剧集', icon: '📺' },
-    { key: 'local', label: '本地影视', icon: '💾' },
-    { key: 'settings', label: '设置', icon: '⚙' },
-  ]
+  const handleHistoryClick = (query: string) => {
+    setSearchText(query)
+    onSearch(query)
+    setSearchFocused(false)
+  }
+
+  const currentPath = location.pathname
+  const showDropdown = searchFocused && !searchText && history.length > 0
 
   return (
-    <nav
-      className="navbar"
-      style={{
-        background: scrolled
-          ? 'rgba(0,0,0,0.95)'
-          : 'rgba(0,0,0,0.78)',
-        boxShadow: scrolled
-          ? '0 1px 0 rgba(255,255,255,0.06), 0 4px 24px rgba(0,0,0,0.4)'
-          : '0 1px 0 rgba(255,255,255,0.04)',
-        transition: 'background 0.35s ease, box-shadow 0.35s ease',
-      }}
-    >
+    <nav className={`navbar${scrolled ? ' scrolled' : ''}`}>
       <div className="navbar-inner">
         {/* Logo */}
         <div
           className="nav-brand"
           onClick={() => onPageChange('trending')}
-          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
         >
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 28, height: 28,
-            borderRadius: 8,
-            background: 'var(--accent-gradient)',
-            fontSize: 14,
-          }}>
-            🎬
-          </span>
+          <span className="nav-brand-icon">🎬</span>
           Movie Center
         </div>
 
         {/* 导航链接 */}
         <div className="nav-links">
           {navItems.map(item => {
-            const active = currentPage === item.key
+            const active = currentPath === item.path
             return (
               <button
-                key={item.key}
+                key={item.path}
                 className={`nav-link ${active ? 'active' : ''}`}
-                onClick={() => onPageChange(item.key)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 5,
-                }}
+                onClick={() => onPageChange(item.path === '/' ? 'trending' : item.path.slice(1))}
               >
-                <span style={{
-                  fontSize: 13,
-                  opacity: active ? 1 : 0,
-                  transform: active ? 'scale(1)' : 'scale(0.6)',
-                  transition: 'all 0.3s var(--ease-spring)',
-                  position: 'absolute',
-                  marginLeft: -18,
-                }}>
-                  {item.icon}
-                </span>
-                <span style={{
-                  transform: active ? 'translateX(6px)' : 'translateX(0)',
-                  transition: 'transform 0.3s var(--ease-spring)',
-                }}>
-                  {item.label}
-                </span>
+                <span className="nav-link-icon">{item.icon}</span>
+                <span className="nav-link-label">{item.label}</span>
               </button>
             )
           })}
 
           {/* 搜索框 */}
           <form
-            className="nav-search"
-            onSubmit={handleSearch}
-            style={{
-              transition: 'all 0.3s var(--ease-spring)',
-              background: searchFocused
-                ? 'rgba(255,255,255,0.12)'
-                : 'rgba(255,255,255,0.06)',
-              borderColor: searchFocused
-                ? 'rgba(0,113,227,0.5)'
-                : 'rgba(255,255,255,0.06)',
-            }}
+            className={`nav-search${searchFocused ? ' focused' : ''}`}
+            onSubmit={handleSubmit}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-tertiary)', flexShrink: 0 }}>
               <circle cx="11" cy="11" r="8" />
@@ -127,29 +124,43 @@ const Navbar: FC<Props> = ({ currentPage, onPageChange, onSearch }) => {
               value={searchText}
               onChange={e => setSearchText(e.target.value)}
               onFocus={() => setSearchFocused(true)}
-              onBlur={() => setSearchFocused(false)}
-              style={{
-                width: searchFocused ? 200 : 150,
-                transition: 'width 0.3s var(--ease-spring)',
-              }}
+              onBlur={() => setTimeout(() => setSearchFocused(false), 200)}
             />
             {searchText && (
               <button
                 type="button"
+                className="nav-search-clear"
                 onClick={() => { setSearchText(''); onSearch('') }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-tertiary)',
-                  cursor: 'pointer',
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  fontSize: 12,
-                }}
               >
                 ✕
               </button>
+            )}
+
+            {/* 搜索历史下拉 */}
+            {showDropdown && (
+              <div className="nav-search-dropdown">
+                {history.map((query, i) => (
+                  <button
+                    key={`${query}-${i}`}
+                    className="nav-search-history-item"
+                    type="button"
+                    onClick={() => handleHistoryClick(query)}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    {query}
+                  </button>
+                ))}
+                <button
+                  className="nav-search-history-clear"
+                  type="button"
+                  onClick={clearHistory}
+                >
+                  清除搜索历史
+                </button>
+              </div>
             )}
           </form>
         </div>
