@@ -116,7 +116,7 @@ cd client && npm run dev
 
 ### 本地媒体管理
 
-- **递归扫描**：给定根路径，自动下钻多级子目录查找所有视频文件
+- **递归扫描**：给定根路径，自动下钻多级子目录查找所有视频文件，支持 20 种格式
 - **智能识别**：电影（目录含视频文件）/ 剧集（Season 子目录或 S01E01 命名）
 - **NFO 解析**：兼容 `<tmdbid>` 和 `<uniqueid type="tmdb">` 两种格式
 - **文件去重**：按 `local_path` 精确去重，重复扫描区分新增/更新/跳过
@@ -200,8 +200,8 @@ cd client && npm run dev
 D:/media/
   Movies/                         ← 无视频，继续下钻
     Sci-Fi/                       ← 无视频，继续下钻
-      Inception (2010)/           ← 有 .mkv → 处理！
-        Inception (2010).mkv
+      Inception (2010)/           ← 有视频文件 → 处理！
+        Inception (2010).mp4
         poster.jpg
         movie.nfo
   TV Shows/                       ← 无视频，继续下钻
@@ -209,6 +209,10 @@ D:/media/
       tvshow.nfo
       Season 01/
         S01E01.mkv
+```
+
+支持的视频格式：`.mp4` `.mkv` `.avi` `.mov` `.wmv` `.m4v` `.ts` `.iso` `.flv` `.webm` `.rmvb` `.mts` `.m2ts` `.vob` `.rm` `.3gp` `.divx` `.xvid` `.ogm` `.ogv` `.asf`
+
 ```
 
 ## TODO

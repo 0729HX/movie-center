@@ -18,7 +18,7 @@ interface ProcessResult {
   mediaType: 'movie' | 'tv';
 }
 
-const VIDEO_EXTS = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.m4v', '.ts', '.iso', '.flv', '.webm'];
+const VIDEO_EXTS = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.m4v', '.ts', '.iso', '.flv', '.webm', '.rmvb', '.mts', '.m2ts', '.vob', '.rm', '.3gp', '.divx', '.xvid', '.ogm', '.ogv', '.asf'];
 const POSTER_NAMES = ['poster.jpg', 'poster.png', 'folder.jpg', 'cover.jpg', 'movie.jpg'];
 const BACKDROP_NAMES = ['backdrop.jpg', 'fanart.jpg', 'background.jpg', 'backdrop.png'];
 
