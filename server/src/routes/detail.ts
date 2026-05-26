@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDetail, getCredits, getRecommendations } from '../services/tmdb';
+import { getDetailFull } from '../services/tmdb';
 import { query } from '../db';
 import { cacheGet, cacheSet } from '../services/cache';
 
@@ -32,14 +32,9 @@ router.get('/:type/:id', async (req, res) => {
       return res.json(cached);
     }
 
-    // 并行获取详情、演员、推荐
-    const [detail, credits, recommendations] = await Promise.all([
-      getDetail(type, tmdbId),
-      getCredits(type, tmdbId),
-      getRecommendations(type, tmdbId),
-    ]);
-
-    if (!detail) return res.status(404).json({ error: '未找到该影视' });
+    // 单次请求获取详情+演员+推荐（append_to_response 合并）
+    const full = await getDetailFull(type, tmdbId);
+    if (!full) return res.status(404).json({ error: '未找到该影视' });
 
     // 查询本地是否存在
     const localRows: any[] = await query(
@@ -48,12 +43,12 @@ router.get('/:type/:id', async (req, res) => {
     );
 
     if (localRows.length > 0) {
-      detail.isLocal = true;
-      detail.localId = localRows[0].id;
-      detail.localPath = localRows[0].local_path;
+      full.detail.isLocal = true;
+      full.detail.localId = localRows[0].id;
+      full.detail.localPath = localRows[0].local_path;
     }
 
-    const result = { ...detail, credits, recommendations };
+    const result = { ...full.detail, credits: full.credits, recommendations: full.recommendations };
     await cacheSet(cacheKey, result, TTL);
     res.json(result);
   } catch (err: any) {

@@ -8,6 +8,26 @@ import type {
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const OMDB_BASE = 'https://www.omdbapi.com';
 
+// ======================== 内存缓存：tmdb_id → imdb_id ========================
+// external_ids 的映射关系几乎不变，用内存缓存避免重复 TMDB 请求
+const EXTERNAL_ID_CACHE_TTL = 24 * 60 * 60 * 1000; // 24h
+const externalIdCache = new Map<string, { imdbId: string | null; ts: number }>();
+
+function cacheExternalId(tmdbId: number, mediaType: string, imdbId: string | null) {
+  externalIdCache.set(`${mediaType}:${tmdbId}`, { imdbId, ts: Date.now() });
+}
+
+function getCachedExternalId(tmdbId: number, mediaType: string): string | null | undefined {
+  const key = `${mediaType}:${tmdbId}`;
+  const entry = externalIdCache.get(key);
+  if (!entry) return undefined; // 未缓存
+  if (Date.now() - entry.ts > EXTERNAL_ID_CACHE_TTL) {
+    externalIdCache.delete(key);
+    return undefined; // 过期
+  }
+  return entry.imdbId;
+}
+
 // ======================== API Key 获取 ========================
 
 async function getApiKey(): Promise<string> {
@@ -376,75 +396,92 @@ async function addAllRatings(
  * @param items 待填充的列表
  * @param liveCount 前 N 个做实时 OMDb 抓取，其余仅读缓存。默认 0（全读缓存）
  */
+/**
+ * 为单个 item 填充 OMDb + 豆瓣评分
+ */
+async function enrichItemWithOmdb(item: MediaWithRatings, imdbId: string, liveCount: number): Promise<void> {
+  const doLiveFetch = liveCount > 0;
+
+  // OMDb 评分
+  const omdb = doLiveFetch
+    ? await fetchAndCacheOmdb(imdbId, item.tmdbId, item.mediaType)
+    : await getCachedOmdb(imdbId);
+
+  if (omdb) {
+    if (!item.ratings.some(r => r.source === 'IMDb')) {
+      item.ratings.push({
+        source: 'IMDb', icon: 'imdb',
+        score: omdb.imdb ?? item.ratings[0]?.score ?? 0,
+        maxScore: 10,
+        url: `https://www.imdb.com/title/${imdbId}`,
+      });
+    }
+    if (omdb.tomatoes && !item.ratings.some(r => r.source === 'Rotten Tomatoes')) {
+      const score = parseInt(omdb.tomatoes);
+      item.ratings.push({
+        source: 'Rotten Tomatoes', icon: 'tomatoes',
+        score: isNaN(score) ? 0 : score, maxScore: 100,
+        url: `https://www.rottentomatoes.com/search?search=${encodeURIComponent(item.title)}`,
+      });
+    }
+    if (omdb.metacritic !== null && !item.ratings.some(r => r.source === 'Metacritic')) {
+      item.ratings.push({
+        source: 'Metacritic', icon: 'metacritic',
+        score: omdb.metacritic, maxScore: 100,
+        url: `https://www.metacritic.com/search/${encodeURIComponent(item.title)}`,
+      });
+    }
+  }
+
+  // 豆瓣评分
+  if (doLiveFetch) {
+    fetchAndCacheDouban(imdbId, item.tmdbId, item.mediaType, item.title, item.year).catch(() => {});
+  } else {
+    const douban = await getCachedDouban(imdbId);
+    if (douban && !item.ratings.some(r => r.source === '豆瓣')) {
+      item.ratings.push({
+        source: '豆瓣', icon: 'douban',
+        score: douban.score, maxScore: 10,
+        url: `https://movie.douban.com/subject/${douban.doubanId}/`,
+      });
+    }
+  }
+}
+
 async function enrichListWithCachedRatings(items: MediaWithRatings[], liveCount: number = 0): Promise<void> {
   const needsRating = items.filter(i => i.ratings.length <= 1);
   if (needsRating.length === 0) return;
 
-  // 并行查 external_ids 获取 IMDb ID
+  // 先从内存缓存获取 tmdb_id → imdb_id 映射，只对未命中的发起 TMDB 请求
+  const needExtIds: MediaWithRatings[] = [];
+  for (const item of needsRating) {
+    const cachedImdbId = getCachedExternalId(item.tmdbId, item.mediaType);
+    if (cachedImdbId !== undefined) {
+      // 内存缓存命中，直接用
+      if (cachedImdbId) {
+        await enrichItemWithOmdb(item, cachedImdbId, 0);
+      }
+    } else {
+      needExtIds.push(item);
+    }
+  }
+
+  // 只对未缓存的 item 调用 TMDB external_ids
   const CONCURRENCY = 5;
-  for (let i = 0; i < needsRating.length; i += CONCURRENCY) {
-    const batch = needsRating.slice(i, i + CONCURRENCY);
+  for (let i = 0; i < needExtIds.length; i += CONCURRENCY) {
+    const batch = needExtIds.slice(i, i + CONCURRENCY);
     await Promise.all(batch.map(async (item, bi) => {
       const globalIndex = i + bi;
       const doLiveFetch = globalIndex < liveCount;
 
       try {
         const extIds = await tmdbGet<TmdbExternalIds>(`/${item.mediaType}/${item.tmdbId}/external_ids`);
+        // 写入内存缓存
+        cacheExternalId(item.tmdbId, item.mediaType, extIds?.imdb_id || null);
         if (!extIds?.imdb_id) return;
 
         // 前 liveCount 个：实时抓取并缓存；其余：仅读缓存
-        const omdb = doLiveFetch
-          ? await fetchAndCacheOmdb(extIds.imdb_id, item.tmdbId, item.mediaType)
-          : await getCachedOmdb(extIds.imdb_id);
-
-        if (omdb) {
-          if (!item.ratings.some(r => r.source === 'IMDb')) {
-            item.ratings.push({
-              source: 'IMDb',
-              icon: 'imdb',
-              score: omdb.imdb ?? item.ratings[0]?.score ?? 0,
-              maxScore: 10,
-              url: `https://www.imdb.com/title/${extIds.imdb_id}`,
-            });
-          }
-          if (omdb.tomatoes && !item.ratings.some(r => r.source === 'Rotten Tomatoes')) {
-            const score = parseInt(omdb.tomatoes);
-            item.ratings.push({
-              source: 'Rotten Tomatoes',
-              icon: 'tomatoes',
-              score: isNaN(score) ? 0 : score,
-              maxScore: 100,
-              url: `https://www.rottentomatoes.com/search?search=${encodeURIComponent(item.title)}`,
-            });
-          }
-          if (omdb.metacritic !== null && !item.ratings.some(r => r.source === 'Metacritic')) {
-            item.ratings.push({
-              source: 'Metacritic',
-              icon: 'metacritic',
-              score: omdb.metacritic,
-              maxScore: 100,
-              url: `https://www.metacritic.com/search/${encodeURIComponent(item.title)}`,
-            });
-          }
-        }
-
-        // 豆瓣评分：实时抓取不阻塞（后台缓存），仅已有缓存时直接返回
-        if (doLiveFetch) {
-          // 后台抓取，不等待 — 下次请求缓存命中后自动出现
-          fetchAndCacheDouban(extIds.imdb_id, item.tmdbId, item.mediaType, item.title, item.year)
-            .catch(() => {});
-        } else {
-          const douban = await getCachedDouban(extIds.imdb_id);
-          if (douban && !item.ratings.some(r => r.source === '豆瓣')) {
-            item.ratings.push({
-              source: '豆瓣',
-              icon: 'douban',
-              score: douban.score,
-              maxScore: 10,
-              url: `https://movie.douban.com/subject/${douban.doubanId}/`,
-            });
-          }
-        }
+        await enrichItemWithOmdb(item, extIds.imdb_id, doLiveFetch ? 1 : 0);
       } catch {
         // 单个失败不影响整体
       }
@@ -518,8 +555,10 @@ export interface TmdbGenre {
 
 // === 1. 本周热门（电影 + 剧集混合） ===
 export async function getTrending(): Promise<MediaWithRatings[]> {
-  const movieData = await tmdbGet<TmdbPaginated<TmdbMovie>>('/trending/movie/week', { page: 1 });
-  const tvData = await tmdbGet<TmdbPaginated<TmdbTv>>('/trending/tv/week', { page: 1 });
+  const [movieData, tvData] = await Promise.all([
+    tmdbGet<TmdbPaginated<TmdbMovie>>('/trending/movie/week', { page: 1 }),
+    tmdbGet<TmdbPaginated<TmdbTv>>('/trending/tv/week', { page: 1 }),
+  ]);
 
   const movies = movieData.results.slice(0, 10).map(m => ({ ...m, media_type: 'movie' as const }));
   const tvs = tvData.results.slice(0, 10).map(t => ({ ...t, media_type: 'tv' as const }));
@@ -581,13 +620,16 @@ export async function searchMedia(query: string, page: number = 1): Promise<{ it
   return { items, totalPages: data.total_pages, totalResults: data.total_results };
 }
 
-// === 5. 影视详情（带全量外部评分） ===
+// === 5. 影视详情（带全量外部评分） — 单次请求合并 external_ids + credits ===
 export async function getDetail(mediaType: 'movie' | 'tv', id: number): Promise<MediaWithRatings | null> {
   try {
-    const [detail, externalIds] = await Promise.all([
-      tmdbGet<TmdbDetail>(`/${mediaType}/${id}`),
-      tmdbGet<TmdbExternalIds>(`/${mediaType}/${id}/external_ids`),
-    ]);
+    // append_to_response 将 external_ids + credits 合并到 1 次 TMDB 请求
+    const detail = await tmdbGet<TmdbDetail & { external_ids?: TmdbExternalIds; credits?: { cast: TmdbCredit[] } }>(
+      `/${mediaType}/${id}`,
+      { append_to_response: 'external_ids,credits' },
+    );
+
+    const externalIds = detail.external_ids;
 
     const isMovie = mediaType === 'movie';
     const item: TmdbMovie | TmdbTv = {
@@ -609,61 +651,106 @@ export async function getDetail(mediaType: 'movie' | 'tv', id: number): Promise<
 
     const result = buildMediaWithRatings(item, detail, externalIds);
 
+    // 缓存 external_id 映射
+    if (externalIds?.imdb_id) cacheExternalId(id, mediaType, externalIds.imdb_id);
+
     // OMDb + 豆瓣评分：缓存优先，非阻塞回填
     const imdbId = externalIds?.imdb_id;
     if (imdbId) {
-      // 优先读缓存（快，<10ms），只有首次才异步抓取
-      let omdb = await getCachedOmdb(imdbId);
-      if (!omdb) {
-        // 缓存未命中 → 后台抓取不阻塞，下次访问自动命中
-        fetchAndCacheOmdb(imdbId, id, mediaType).catch(() => {});
-      }
-
-      if (omdb) {
-        // 更新 IMDb
-        const imdbRating = result.ratings.find(r => r.source === 'IMDb');
-        if (imdbRating && omdb.imdb !== null) imdbRating.score = omdb.imdb;
-
-        // 追加 Rotten Tomatoes
-        if (omdb.tomatoes && !result.ratings.some(r => r.source === 'Rotten Tomatoes')) {
-          const score = parseInt(omdb.tomatoes);
-          result.ratings.push({
-            source: 'Rotten Tomatoes',
-            icon: 'tomatoes',
-            score: isNaN(score) ? 0 : score,
-            maxScore: 100,
-            url: `https://www.rottentomatoes.com/search?search=${encodeURIComponent(result.title)}`,
-          });
-        }
-
-        // 追加 Metacritic
-        if (omdb.metacritic !== null && !result.ratings.some(r => r.source === 'Metacritic')) {
-          result.ratings.push({
-            source: 'Metacritic',
-            icon: 'metacritic',
-            score: omdb.metacritic,
-            maxScore: 100,
-            url: `https://www.metacritic.com/search/${encodeURIComponent(result.title)}`,
-          });
-        }
-      }
-
-      // 豆瓣评分：后台抓取不阻塞，优先用缓存
-      fetchAndCacheDouban(imdbId, id, mediaType, result.title, result.year)
-        .catch(() => {});
-      const cachedDouban = await getCachedDouban(imdbId);
-      if (cachedDouban && !result.ratings.some(r => r.source === '豆瓣')) {
-        result.ratings.push({
-          source: '豆瓣',
-          icon: 'douban',
-          score: cachedDouban.score,
-          maxScore: 10,
-          url: `https://movie.douban.com/subject/${cachedDouban.doubanId}/`,
-        });
-      }
+      // 后台抓取 OMDb（不阻塞响应），下次访问自动命中缓存
+      fetchAndCacheOmdb(imdbId, id, mediaType).catch(() => {});
+      // 当前请求用缓存
+      await enrichItemWithOmdb(result, imdbId, 0);
     }
 
     return result;
+  } catch {
+    return null;
+  }
+}
+
+// === 5b. 影视详情（完整版：含 credits + recommendations，单次 TMDB 请求） ===
+export async function getDetailFull(
+  mediaType: 'movie' | 'tv', id: number,
+): Promise<{ detail: MediaWithRatings; credits: any[]; recommendations: any[] } | null> {
+  try {
+    const raw = await tmdbGet<TmdbDetail & {
+      external_ids?: TmdbExternalIds;
+      credits?: { cast: TmdbCredit[] };
+      recommendations?: TmdbPaginated<TmdbMovie | TmdbTv>;
+    }>(`/${mediaType}/${id}`, { append_to_response: 'external_ids,credits,recommendations' });
+
+    const externalIds = raw.external_ids;
+    const isMovie = mediaType === 'movie';
+    const item: TmdbMovie | TmdbTv = {
+      id: raw.id,
+      title: raw.title || '',
+      name: raw.name || '',
+      overview: raw.overview,
+      poster_path: raw.poster_path,
+      backdrop_path: raw.backdrop_path,
+      vote_average: raw.vote_average,
+      vote_count: raw.vote_count,
+      genre_ids: raw.genres.map(g => g.id),
+      media_type: mediaType,
+      original_language: '',
+      popularity: 0,
+      release_date: raw.release_date || '',
+      first_air_date: raw.first_air_date || '',
+    };
+
+    const detail = buildMediaWithRatings(item, raw, externalIds);
+
+    // credits
+    const credits = (raw.credits?.cast || [])
+      .sort((a, b) => a.order - b.order)
+      .slice(0, 15)
+      .map(c => ({
+        id: c.id,
+        name: c.name,
+        character: c.character,
+        profilePath: imgUrl(c.profile_path, 'w185'),
+        order: c.order,
+      }));
+
+    // recommendations
+    const recommendations = (raw.recommendations?.results || []).slice(0, 10).map(r => {
+      const rIsMovie = 'title' in r;
+      const title = rIsMovie ? (r as TmdbMovie).title : (r as TmdbTv).name;
+      const date = rIsMovie ? (r as TmdbMovie).release_date : (r as TmdbTv).first_air_date;
+      return {
+        id: r.id,
+        title,
+        posterPath: imgUrl(r.poster_path),
+        year: date ? date.substring(0, 4) : '',
+        mediaType,
+      };
+    });
+
+    // OMDb + 豆瓣评分
+    const imdbId = externalIds?.imdb_id;
+    if (imdbId) {
+      let omdb = await getCachedOmdb(imdbId);
+      if (!omdb) fetchAndCacheOmdb(imdbId, id, mediaType).catch(() => {});
+      if (omdb) {
+        const imdbRating = detail.ratings.find(r => r.source === 'IMDb');
+        if (imdbRating && omdb.imdb !== null) imdbRating.score = omdb.imdb;
+        if (omdb.tomatoes && !detail.ratings.some(r => r.source === 'Rotten Tomatoes')) {
+          const score = parseInt(omdb.tomatoes);
+          detail.ratings.push({ source: 'Rotten Tomatoes', icon: 'tomatoes', score: isNaN(score) ? 0 : score, maxScore: 100, url: `https://www.rottentomatoes.com/search?search=${encodeURIComponent(detail.title)}` });
+        }
+        if (omdb.metacritic !== null && !detail.ratings.some(r => r.source === 'Metacritic')) {
+          detail.ratings.push({ source: 'Metacritic', icon: 'metacritic', score: omdb.metacritic, maxScore: 100, url: `https://www.metacritic.com/search/${encodeURIComponent(detail.title)}` });
+        }
+      }
+      fetchAndCacheDouban(imdbId, id, mediaType, detail.title, detail.year).catch(() => {});
+      const cachedDouban = await getCachedDouban(imdbId);
+      if (cachedDouban && !detail.ratings.some(r => r.source === '豆瓣')) {
+        detail.ratings.push({ source: '豆瓣', icon: 'douban', score: cachedDouban.score, maxScore: 10, url: `https://movie.douban.com/subject/${cachedDouban.doubanId}/` });
+      }
+    }
+
+    return { detail, credits, recommendations };
   } catch {
     return null;
   }

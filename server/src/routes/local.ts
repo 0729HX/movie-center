@@ -1,8 +1,9 @@
 import { Router } from 'express';
+import fs from 'fs/promises';
 import { query } from '../db';
 import { scanDirectory, getLocalMediaList, addToLocal, removeFromLocal } from '../services/scanner';
 import { playWithPotPlayer } from '../services/player';
-import { getDetail, getCredits, getRecommendations, searchMedia } from '../services/tmdb';
+import { getDetail, getDetailFull, getCredits, getRecommendations, searchMedia } from '../services/tmdb';
 import { cacheGet, cacheDel } from '../services/cache';
 
 const router = Router();
@@ -31,9 +32,9 @@ async function preCacheAllLocalDetails(items: any[]) {
 
   console.log(`[PreCache] 开始预热 ${items.length} 个本地影视 (有TMDB:${withTmdb.length} 无TMDB:${withoutTmdb.length})`);
 
-  // 1. 有 TMDB ID 的 → 直接预热 Redis 缓存，并发 3
+  // 1. 有 TMDB ID 的 → 使用 append_to_response 合并为单次请求，并发 5
   let done = 0;
-  const CONCURRENCY = 3;
+  const CONCURRENCY = 5;
   for (let i = 0; i < withTmdb.length; i += CONCURRENCY) {
     const batch = withTmdb.slice(i, i + CONCURRENCY);
     await Promise.allSettled(
@@ -43,20 +44,17 @@ async function preCacheAllLocalDetails(items: any[]) {
           const cacheKey = `detail:${item.media_type}:${item.tmdb_id}`;
           const cached = await cacheGet(cacheKey);
           if (cached) return;
-          await Promise.all([
-            getDetail(item.media_type, item.tmdb_id),
-            getCredits(item.media_type, item.tmdb_id),
-            getRecommendations(item.media_type, item.tmdb_id),
-          ]);
+          // 单次请求获取 detail + credits + recommendations
+          await getDetailFull(item.media_type, item.tmdb_id);
         } catch { /* 单个失败不影响整体 */ }
         done++;
       })
     );
   }
 
-  // 2. 无 TMDB ID 的 → 标题搜索匹配后预热，并发 2（避免触发 TMDB 频率限制）
+  // 2. 无 TMDB ID 的 → 标题搜索匹配后预热，并发 3
   if (withoutTmdb.length > 0) {
-    const SEARCH_CONCURRENCY = 2;
+    const SEARCH_CONCURRENCY = 3;
     for (let i = 0; i < withoutTmdb.length; i += SEARCH_CONCURRENCY) {
       const batch = withoutTmdb.slice(i, i + SEARCH_CONCURRENCY);
       await Promise.allSettled(
@@ -73,11 +71,8 @@ async function preCacheAllLocalDetails(items: any[]) {
             }) || results[0];
 
             if (match && match.tmdbId > 0) {
-              await Promise.all([
-                getDetail(item.media_type, match.tmdbId),
-                getCredits(item.media_type, match.tmdbId),
-                getRecommendations(item.media_type, match.tmdbId),
-              ]);
+              // 单次请求获取 detail + credits + recommendations
+              await getDetailFull(item.media_type, match.tmdbId);
               // 回写 TMDB ID
               await query('UPDATE local_media SET tmdb_id = ? WHERE id = ?', [match.tmdbId, item.id]);
             }
@@ -97,6 +92,21 @@ async function preCacheAllLocalDetails(items: any[]) {
 router.get('/', async (_req, res) => {
   try {
     const items = await getLocalMediaList();
+
+    // 海报回退：poster_path 为空但有 tmdb_id 的，尝试从 Redis 缓存取 TMDB 海报
+    const needPoster = items.filter((i: any) => !i.poster_path && i.tmdb_id && i.tmdb_id > 0);
+    if (needPoster.length > 0) {
+      await Promise.allSettled(needPoster.map(async (item: any) => {
+        try {
+          const cacheKey = `detail:${item.media_type}:${item.tmdb_id}`;
+          const cached: any = await cacheGet(cacheKey);
+          if (cached?.posterPath) {
+            item.poster_path = cached.posterPath;
+          }
+        } catch { /* skip */ }
+      }));
+    }
+
     res.json({ items });
 
     // 后台异步预热所有详情缓存（不阻塞响应）
@@ -126,19 +136,13 @@ router.post('/scan', async (req, res) => {
 
     const result = await scanDirectory(rootPath);
 
-    // 扫描完成后，异步预热新发现/更新的 TMDB 详情
+    // 扫描完成后，异步预热新发现/更新的 TMDB 详情（单次请求/项）
     if (result.tmdbItems.length > 0) {
       const uniqueItems = result.tmdbItems.filter(
         (v, i, a) => a.findIndex(t => t.tmdbId === v.tmdbId && t.mediaType === v.mediaType) === i
       );
       Promise.allSettled(
-        uniqueItems.map(item =>
-          Promise.all([
-            getDetail(item.mediaType, item.tmdbId),
-            getCredits(item.mediaType, item.tmdbId),
-            getRecommendations(item.mediaType, item.tmdbId),
-          ]).catch(() => {})
-        )
+        uniqueItems.map(item => getDetailFull(item.mediaType, item.tmdbId).catch(() => {}))
       ).then(() => {
         console.log(`[PreCache] 扫描预热完成: ${uniqueItems.length} 个详情`);
       });
@@ -165,12 +169,8 @@ router.post('/save', async (req, res) => {
     const id = await addToLocal(tmdb_id, media_type, title);
     invalidateCaches(media_type, tmdb_id);
 
-    // 后台预热该影片的详情缓存
-    Promise.all([
-      getDetail(media_type, tmdb_id),
-      getCredits(media_type, tmdb_id),
-      getRecommendations(media_type, tmdb_id),
-    ]).catch(() => {});
+    // 后台预热该影片的详情缓存（单次请求）
+    getDetailFull(media_type, tmdb_id).catch(() => {});
 
     res.json({ id, success: true });
   } catch (err: any) {
@@ -178,15 +178,39 @@ router.post('/save', async (req, res) => {
   }
 });
 
-// 从本地删除
+// 从本地删除（同时删除影视文件夹）
 router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const rows: any[] = await query('SELECT tmdb_id, media_type FROM local_media WHERE id = ?', [id]);
+    const rows: any[] = await query(
+      'SELECT tmdb_id, media_type, local_path, poster_path, backdrop_path FROM local_media WHERE id = ?',
+      [id]
+    );
+    if (rows.length === 0) return res.json({ success: false });
+
+    const row = rows[0];
     const ok = await removeFromLocal(id);
-    if (rows.length > 0) {
-      invalidateCaches(rows[0].media_type, rows[0].tmdb_id);
+
+    // 删除影视文件夹（视频文件所在目录的父目录，如 "决战中途岛 (2019)"）
+    if (ok && row.local_path) {
+      try {
+        const path = await import('path');
+        const videoDir = path.dirname(row.local_path);
+        // 如果 videoDir 下有 season 子目录，说明是剧集结构，删上一级
+        let dirToDelete = videoDir;
+        const parentDir = path.dirname(videoDir);
+        const dirName = path.basename(videoDir).toLowerCase();
+        if (dirName.startsWith('season')) {
+          dirToDelete = parentDir;
+        }
+        await fs.rm(dirToDelete, { recursive: true, force: true });
+        console.log(`[Delete] 已删除文件夹: ${dirToDelete}`);
+      } catch (err: any) {
+        console.error(`[Delete] 文件夹删除失败: ${err.message}`);
+      }
     }
+
+    if (ok) invalidateCaches(row.media_type, row.tmdb_id);
     res.json({ success: ok });
   } catch (err: any) {
     res.status(500).json({ error: '删除失败' });
@@ -205,14 +229,12 @@ router.get('/detail/:id', async (req, res) => {
     const local = rows[0];
     let detail: any = null;
 
-    // 如果有 TMDB ID，直接获取详情+演员+推荐（通常已预热，Redis 命中 <10ms）
+    // 如果有 TMDB ID，单次请求获取详情+演员+推荐（通常已预热，Redis 命中 <10ms）
     if (local.tmdb_id && local.tmdb_id > 0) {
-      const [d, credits, recommendations] = await Promise.all([
-        getDetail(local.media_type, local.tmdb_id),
-        getCredits(local.media_type, local.tmdb_id),
-        getRecommendations(local.media_type, local.tmdb_id),
-      ]);
-      detail = { ...d, credits, recommendations };
+      const full = await getDetailFull(local.media_type, local.tmdb_id);
+      if (full) {
+        detail = { ...full.detail, credits: full.credits, recommendations: full.recommendations };
+      }
     }
 
     // 没有 TMDB ID → 按标题+年份搜索 TMDB
@@ -228,12 +250,8 @@ router.get('/detail/:id', async (req, res) => {
       }) || results[0];
 
       if (match) {
-        const [d, credits, recommendations] = await Promise.all([
-          getDetail(local.media_type, match.tmdbId),
-          getCredits(local.media_type, match.tmdbId),
-          getRecommendations(local.media_type, match.tmdbId),
-        ]);
-        detail = { ...d, credits, recommendations };
+        const full = await getDetailFull(local.media_type, match.tmdbId);
+        if (full) detail = { ...full.detail, credits: full.credits, recommendations: full.recommendations };
 
         if (match.tmdbId > 0) {
           await query('UPDATE local_media SET tmdb_id = ? WHERE id = ?', [match.tmdbId, id]);

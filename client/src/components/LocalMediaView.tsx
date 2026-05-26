@@ -119,7 +119,9 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
       tmdbId: item.tmdb_id,
       title: item.title,
       overview: '',
-      posterPath: item.poster_path ? `/api/local/file?path=${encodeURIComponent(item.poster_path)}` : null,
+      posterPath: item.poster_path
+        ? (item.poster_path.startsWith('http') ? item.poster_path : `/api/local/file?path=${encodeURIComponent(item.poster_path)}`)
+        : null,
       backdropPath: null,
       year: String(item.year || ''),
       mediaType: item.media_type,
@@ -314,7 +316,9 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
         <div className="poster-grid">
           {displayItems.map((item, index) => {
             const posterUrl = item.poster_path
-              ? `/api/local/file?path=${encodeURIComponent(item.poster_path!)}`
+              ? (item.poster_path!.startsWith('http')
+                ? item.poster_path!
+                : `/api/local/file?path=${encodeURIComponent(item.poster_path!)}`)
               : null
             return (
               <LocalCard
@@ -354,7 +358,7 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
           <div className="batch-confirm-dialog" onClick={e => e.stopPropagation()}>
             <div className="batch-confirm-title">确认删除</div>
             <div className="batch-confirm-msg">
-              确定要删除已选的 {selectedIds.size} 项本地影视吗？此操作不可撤销。
+              确定要删除已选的 {selectedIds.size} 项本地影视吗？对应的影视文件夹也将被删除，此操作不可撤销。
             </div>
             <div className="batch-confirm-actions">
               <button className="genre-pill" onClick={() => setShowConfirm(false)}>取消</button>
