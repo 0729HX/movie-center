@@ -11,7 +11,6 @@ const iconLabels: Record<string, string> = {
   imdb: 'i',
   tomatoes: 'RT',
   metacritic: 'M',
-  douban: '豆',
 }
 
 const formatScore = (r: RatingSource): string => {
@@ -27,7 +26,6 @@ const colorMap: Record<string, { bg: string; fg: string }> = {
   imdb: { bg: '#f5c518', fg: '#000' },
   tomatoes: { bg: '#fa320a', fg: '#fff' },
   metacritic: { bg: '#ffcc33', fg: '#000' },
-  douban: { bg: '#2E963D', fg: '#fff' },
 }
 
 const RatingBadge: FC<Props> = ({ ratings, compact }) => {

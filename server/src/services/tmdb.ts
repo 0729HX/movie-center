@@ -130,92 +130,6 @@ async function getCachedOmdb(imdbId: string): Promise<OmdbRatings | null> {
   }
 }
 
-// ======================== 豆瓣评分获取 + 缓存 ========================
-
-const DOUBAN_PROXY = 'https://douban.uieee.xyz';
-
-interface DoubanResult {
-  doubanId: string;
-  score: number;  // 0-10
-}
-
-/**
- * 从豆瓣代理 API 搜索并获取评分，写入缓存
- * 策略：按 IMDb ID 搜索 → 按标题+年份匹配 → 提取评分
- */
-async function fetchAndCacheDouban(
-  imdbId: string,
-  tmdbId: number,
-  mediaType: string,
-  title: string,
-  year: string,
-): Promise<DoubanResult | null> {
-  try {
-    // 用 IMDb ID 或标题搜索豆瓣
-    const searchQ = imdbId || title;
-    const { data } = await axios.get(`${DOUBAN_PROXY}/v2/movie/search`, {
-      params: { q: searchQ, count: 5 },
-      timeout: 3000,
-    });
-
-    if (!data.subjects || data.subjects.length === 0) {
-      console.log(`[Douban] 未搜到: ${title}`);
-      return null;
-    }
-
-    // 按年份匹配最佳结果
-    let match = data.subjects[0];
-    const yearNum = parseInt(year);
-    for (const s of data.subjects) {
-      if (!isNaN(yearNum) && parseInt(s.year) === yearNum) {
-        match = s;
-        break;
-      }
-    }
-
-    const score = match.rating?.average;
-    if (!score || score <= 0) {
-      console.log(`[Douban] ${title} 无评分`);
-      return null;
-    }
-
-    const doubanId = String(match.id);
-
-    // 更新缓存（仅豆瓣字段，不影响 OMDb 字段）
-    await query(
-      `INSERT INTO rating_cache (imdb_id, tmdb_id, media_type, douban_id, douban_score)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE douban_id = VALUES(douban_id), douban_score = VALUES(douban_score), updated_at = NOW()`,
-      [imdbId, tmdbId, mediaType, doubanId, score],
-    );
-
-    console.log(`[Douban] ${title} → ${score} (id:${doubanId})`);
-    return { doubanId, score };
-  } catch (err: any) {
-    console.log(`[Douban] 请求异常: ${err.message}`);
-    return null;
-  }
-}
-
-/**
- * 从缓存读取豆瓣评分
- */
-async function getCachedDouban(imdbId: string): Promise<DoubanResult | null> {
-  try {
-    const rows: any[] = await query(
-      'SELECT douban_id, douban_score FROM rating_cache WHERE imdb_id = ? AND douban_score IS NOT NULL',
-      [imdbId],
-    );
-    if (rows.length > 0 && rows[0].douban_score) {
-      // mysql2 将 DECIMAL 列作为字符串返回，需要显式转换
-      return { doubanId: rows[0].douban_id, score: Number(rows[0].douban_score) };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 // ======================== 本地已存标记 ========================
 
 /**
@@ -397,7 +311,7 @@ async function addAllRatings(
  * @param liveCount 前 N 个做实时 OMDb 抓取，其余仅读缓存。默认 0（全读缓存）
  */
 /**
- * 为单个 item 填充 OMDb + 豆瓣评分
+ * 为单个 item 填充 OMDb 评分
  */
 async function enrichItemWithOmdb(item: MediaWithRatings, imdbId: string, liveCount: number): Promise<void> {
   const doLiveFetch = liveCount > 0;
@@ -429,20 +343,6 @@ async function enrichItemWithOmdb(item: MediaWithRatings, imdbId: string, liveCo
         source: 'Metacritic', icon: 'metacritic',
         score: omdb.metacritic, maxScore: 100,
         url: `https://www.metacritic.com/search/${encodeURIComponent(item.title)}`,
-      });
-    }
-  }
-
-  // 豆瓣评分
-  if (doLiveFetch) {
-    fetchAndCacheDouban(imdbId, item.tmdbId, item.mediaType, item.title, item.year).catch(() => {});
-  } else {
-    const douban = await getCachedDouban(imdbId);
-    if (douban && !item.ratings.some(r => r.source === '豆瓣')) {
-      item.ratings.push({
-        source: '豆瓣', icon: 'douban',
-        score: douban.score, maxScore: 10,
-        url: `https://movie.douban.com/subject/${douban.doubanId}/`,
       });
     }
   }
@@ -654,7 +554,7 @@ export async function getDetail(mediaType: 'movie' | 'tv', id: number): Promise<
     // 缓存 external_id 映射
     if (externalIds?.imdb_id) cacheExternalId(id, mediaType, externalIds.imdb_id);
 
-    // OMDb + 豆瓣评分：缓存优先，非阻塞回填
+    // OMDb 评分：缓存优先，非阻塞回填
     const imdbId = externalIds?.imdb_id;
     if (imdbId) {
       // 后台抓取 OMDb（不阻塞响应），下次访问自动命中缓存
@@ -727,7 +627,7 @@ export async function getDetailFull(
       };
     });
 
-    // OMDb + 豆瓣评分
+    // OMDb 评分
     const imdbId = externalIds?.imdb_id;
     if (imdbId) {
       let omdb = await getCachedOmdb(imdbId);
@@ -742,11 +642,6 @@ export async function getDetailFull(
         if (omdb.metacritic !== null && !detail.ratings.some(r => r.source === 'Metacritic')) {
           detail.ratings.push({ source: 'Metacritic', icon: 'metacritic', score: omdb.metacritic, maxScore: 100, url: `https://www.metacritic.com/search/${encodeURIComponent(detail.title)}` });
         }
-      }
-      fetchAndCacheDouban(imdbId, id, mediaType, detail.title, detail.year).catch(() => {});
-      const cachedDouban = await getCachedDouban(imdbId);
-      if (cachedDouban && !detail.ratings.some(r => r.source === '豆瓣')) {
-        detail.ratings.push({ source: '豆瓣', icon: 'douban', score: cachedDouban.score, maxScore: 10, url: `https://movie.douban.com/subject/${cachedDouban.doubanId}/` });
       }
     }
 
