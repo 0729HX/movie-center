@@ -53,8 +53,29 @@
   --ease-dramatic: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* --- CSS Variables (non-theme tokens) --- */
+/* --- CSS Variables (non-theme tokens + aliases for @theme tokens) --- */
 :root {
+  /* Aliases: map short names to @theme full names so legacy CSS var() references work */
+  --bg-primary: var(--color-bg-primary);
+  --bg-secondary: var(--color-bg-secondary);
+  --bg-card: var(--color-bg-card);
+  --bg-hover: var(--color-bg-hover);
+  --bg-glass: var(--color-bg-glass);
+  --bg-glass-light: var(--color-bg-glass-light);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-tertiary: var(--color-text-tertiary);
+  --accent: var(--color-accent);
+  --accent-hover: var(--color-accent-hover);
+  --accent-active: var(--color-accent-active);
+  --rating-high: var(--color-rating-high);
+  --rating-mid: var(--color-rating-mid);
+  --rating-low: var(--color-rating-low);
+  --cinema-warm: var(--color-cinema-warm);
+  --cinema-cool: var(--color-cinema-cool);
+  --cinema-rose: var(--color-cinema-rose);
+
+  /* Non-theme tokens */
   --accent-gradient: linear-gradient(135deg, #2997ff, #64d2ff);
   --glass-blur: 48px;
   --glass-saturate: 200%;
