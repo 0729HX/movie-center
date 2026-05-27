@@ -1,6 +1,8 @@
 import { useState, type FC, useEffect } from 'react'
 import type { MediaWithRatings, Recommendation, NfoRating, StreamInfo } from '../types'
 import RatingBadge from './RatingBadge'
+import SubtitlePanel from './SubtitlePanel'
+import TrackManager from './TrackManager'
 import { useDetail } from '../context/hooks'
 
 interface Props {
@@ -300,6 +302,20 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
                 : recs.map(r => <RecCard key={r.id} title={r.title} year={r.year} posterPath={r.posterPath} onClick={() => handleSelectRecommendation(r)} />)
               }
             </div>
+          </div>
+        )}
+
+        {/* 字幕管理 - 仅本地媒体显示 */}
+        {media.isLocal && media.localId && (
+          <div className="px-7 pb-3">
+            <SubtitlePanel mediaId={media.localId} visible={true} />
+          </div>
+        )}
+
+        {/* 轨道管理 - 仅本地媒体显示 */}
+        {media.isLocal && media.localId && (
+          <div className="px-7 pb-7">
+            <TrackManager mediaId={media.localId} visible={true} />
           </div>
         )}
       </div>
