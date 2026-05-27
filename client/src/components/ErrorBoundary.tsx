@@ -26,14 +26,14 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="error-boundary">
-          <div className="error-boundary-icon">🤷</div>
-          <h2 className="error-boundary-title">页面渲染出错</h2>
-          <p className="error-boundary-msg">
+        <div className="flex flex-col items-center justify-center min-h-screen bg-black text-[#f5f5f7] p-10 text-center font-[-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif]">
+          <div className="text-[48px] mb-4 opacity-60">🤷</div>
+          <h2 className="text-[22px] font-bold mb-2 tracking-tight">页面渲染出错</h2>
+          <p className="text-[#86868b] text-sm mb-6 max-w-[400px] leading-relaxed">
             {this.state.error?.message || '未知错误'}
           </p>
           <button
-            className="error-boundary-btn"
+            className="bg-gradient-to-br from-[#2997ff] via-[#40a8ff] to-[#64d2ff] text-white border-none py-2.5 px-6 rounded-xl text-[15px] font-semibold cursor-pointer transition-all duration-[0.25s] ease-[var(--ease-spring)] shadow-[0_2px_10px_rgba(41,151,255,0.35)] hover:-translate-y-0.5 hover:shadow-[0_8px_28px_rgba(41,151,255,0.45)] hover:brightness-110"
             onClick={() => {
               this.setState({ hasError: false, error: null })
               window.location.reload()

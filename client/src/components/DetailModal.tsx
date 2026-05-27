@@ -223,15 +223,15 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
 
         {/* 简介 */}
         {media.overview && (
-          <div className="modal-section modal-section-overview">
-            <p className="modal-overview-text">{media.overview}</p>
+          <div className="px-7 pt-3.5 pb-0">
+            <p className="text-sm leading-[1.8] text-white/60 m-0 tracking-[0.005em]">{media.overview}</p>
           </div>
         )}
 
         {/* 本地路径 */}
         {media.isLocal && media.localPath && (
-          <div className="modal-section">
-            <div className="modal-local-path">{media.localPath}</div>
+          <div className="px-7 pt-3.5 pb-0">
+            <div className="py-2.5 px-3.5 bg-white/[0.03] rounded-lg text-xs text-[var(--text-tertiary)] font-[family-name:var(--font-mono)] break-all leading-relaxed border border-white/[0.04]">{media.localPath}</div>
           </div>
         )}
 
@@ -267,8 +267,8 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
 
         {/* 演员 */}
         {(cast.length > 0 || loading) && (
-          <div className="modal-section modal-section-cast">
-            <h4 className="modal-section-heading">演员阵容</h4>
+          <div className="px-7 pt-[22px] pb-2">
+            <h4 className="text-xs font-bold mb-3 text-[var(--text-secondary)] uppercase tracking-[0.8px]">演员阵容</h4>
             <div className="modal-cast-row">
               {loading && cast.length === 0
                 ? Array.from({ length: 8 }).map((_, i) => (
@@ -286,8 +286,8 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
 
         {/* 推荐 */}
         {(recs.length > 0 || loading) && (
-          <div className="modal-section modal-section-recs">
-            <h4 className="modal-section-heading">类似推荐</h4>
+          <div className="px-7 pt-2 pb-7">
+            <h4 className="text-xs font-bold mb-3 text-[var(--text-secondary)] uppercase tracking-[0.8px]">类似推荐</h4>
             <div style={{ display: 'flex', gap: 14, overflowX: 'auto', paddingBottom: 4 }}>
               {loading && recs.length === 0
                 ? Array.from({ length: 6 }).map((_, i) => (

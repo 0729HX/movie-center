@@ -64,11 +64,11 @@ const PosterWall: FC<Props> = ({
         <h2 className="section-title" style={{ margin: 0, padding: 0 }}>
           {title}
           {resultCount !== undefined && resultCount > 0 && (
-            <span className="search-result-count"> · {resultCount} 个结果</span>
+            <span className="text-[13px] font-normal text-[var(--text-tertiary)] ml-1"> · {resultCount} 个结果</span>
           )}
         </h2>
         {onClear && (
-          <button className="btn-clear-search" onClick={onClear}>
+          <button className="text-[13px] text-[var(--accent)] cursor-pointer bg-none border-none font-medium flex items-center gap-1 font-[family-name:var(--font-body)]" onClick={onClear}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
@@ -128,11 +128,11 @@ const PosterWall: FC<Props> = ({
 
           {/* 哨兵 — 滚动到此自动加载 */}
           {hasMore && onLoadMore && (
-            <div ref={sentinelRef} className="load-more-sentinel">
+            <div ref={sentinelRef} className="text-center py-8">
               {loadingMore ? (
-                <span className="load-more-text">加载中...</span>
+                <span className="text-sm text-[var(--text-tertiary)]">加载中...</span>
               ) : (
-                <span className="load-more-text">
+                <span className="text-sm text-[var(--text-tertiary)]">
                   {itemCount} / {itemCount + (hasMore ? 20 : 0)} 部
                 </span>
               )}
@@ -141,7 +141,7 @@ const PosterWall: FC<Props> = ({
 
           {/* 全部加载完 */}
           {!hasMore && items.length > 0 && (
-            <div className="all-loaded-text">— 已加载全部 {items.length} 部 —</div>
+            <div className="text-center py-8 text-[13px] text-[var(--text-tertiary)]">— 已加载全部 {items.length} 部 —</div>
           )}
         </>
       )}
