@@ -5,6 +5,8 @@ import { scanDirectory, getLocalMediaList, addToLocal, removeFromLocal } from '.
 import { playWithPotPlayer } from '../services/player';
 import { getDetail, getDetailFull, getCredits, getRecommendations, searchMedia } from '../services/tmdb';
 import { cacheGet, cacheDel } from '../services/cache';
+import { badRequest, notFound, internalError } from '../middleware/errorHandler';
+import type { TypedRequest, TypedResponse, LocalMediaItem } from '../types/api';
 
 const router = Router();
 
@@ -26,9 +28,9 @@ function invalidateCaches(mediaType?: string, tmdbId?: number) {
  * - 无 TMDB ID → 标题搜索 TMDB → 匹配成功则预热 + 回写 tmdb_id
  * - 限制并发数，不阻塞主流程
  */
-async function preCacheAllLocalDetails(items: any[]) {
-  const withTmdb = items.filter((i: any) => i.tmdb_id && i.tmdb_id > 0);
-  const withoutTmdb = items.filter((i: any) => !i.tmdb_id || i.tmdb_id <= 0);
+async function preCacheAllLocalDetails(items: LocalMediaItem[]) {
+  const withTmdb = items.filter((i) => i.tmdb_id && i.tmdb_id > 0);
+  const withoutTmdb = items.filter((i) => !i.tmdb_id || i.tmdb_id <= 0);
 
   console.log(`[PreCache] 开始预热 ${items.length} 个本地影视 (有TMDB:${withTmdb.length} 无TMDB:${withoutTmdb.length})`);
 
@@ -38,14 +40,14 @@ async function preCacheAllLocalDetails(items: any[]) {
   for (let i = 0; i < withTmdb.length; i += CONCURRENCY) {
     const batch = withTmdb.slice(i, i + CONCURRENCY);
     await Promise.allSettled(
-      batch.map(async (item: any) => {
+      batch.map(async (item) => {
         try {
           // 先查 Redis 是否已有缓存，有则跳过
           const cacheKey = `detail:${item.media_type}:${item.tmdb_id}`;
           const cached = await cacheGet(cacheKey);
           if (cached) return;
           // 单次请求获取 detail + credits + recommendations
-          await getDetailFull(item.media_type, item.tmdb_id);
+          await getDetailFull(item.media_type, item.tmdb_id!);
         } catch { /* 单个失败不影响整体 */ }
         done++;
       })
@@ -58,13 +60,13 @@ async function preCacheAllLocalDetails(items: any[]) {
     for (let i = 0; i < withoutTmdb.length; i += SEARCH_CONCURRENCY) {
       const batch = withoutTmdb.slice(i, i + SEARCH_CONCURRENCY);
       await Promise.allSettled(
-        batch.map(async (item: any) => {
+        batch.map(async (item) => {
           try {
             let searchText = item.title;
             if (item.year) searchText += ` ${item.year}`;
             const { items: results } = await searchMedia(searchText, 1);
 
-            const match = results.find((r: any) => {
+            const match = results.find((r) => {
               const titleMatch = r.title.toLowerCase() === item.title.toLowerCase();
               const yearMatch = !item.year || r.year === String(item.year);
               return titleMatch || (r.title.includes(item.title.slice(0, 6)) && yearMatch);
@@ -89,14 +91,21 @@ async function preCacheAllLocalDetails(items: any[]) {
 // ======================== 路由 ========================
 
 // 获取本地媒体列表 — 返回后异步预热全部详情
-router.get('/', async (_req, res) => {
+router.get('/', async (_req, res: TypedResponse<{ items: LocalMediaItem[] }>) => {
   try {
-    const items = await getLocalMediaList();
+    const rawItems = await getLocalMediaList();
+    // 解析 JSON 字段
+    const items = rawItems.map((item: any) => ({
+      ...item,
+      nfo_ratings: item.nfo_ratings ? (typeof item.nfo_ratings === 'string' ? JSON.parse(item.nfo_ratings) : item.nfo_ratings) : null,
+      stream_info: item.stream_info ? (typeof item.stream_info === 'string' ? JSON.parse(item.stream_info) : item.stream_info) : null,
+      clearlogo_path: item.clearlogo_path || null,
+    }));
 
     // 海报回退：poster_path 为空但有 tmdb_id 的，尝试从 Redis 缓存取 TMDB 海报
-    const needPoster = items.filter((i: any) => !i.poster_path && i.tmdb_id && i.tmdb_id > 0);
+    const needPoster = items.filter((i) => !i.poster_path && i.tmdb_id && i.tmdb_id > 0);
     if (needPoster.length > 0) {
-      await Promise.allSettled(needPoster.map(async (item: any) => {
+      await Promise.allSettled(needPoster.map(async (item) => {
         try {
           const cacheKey = `detail:${item.media_type}:${item.tmdb_id}`;
           const cached: any = await cacheGet(cacheKey);
@@ -115,13 +124,15 @@ router.get('/', async (_req, res) => {
         console.error('[PreCache] 预热异常:', err.message)
       );
     }
-  } catch (err: any) {
-    res.status(500).json({ error: '获取本地媒体失败' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('Local list error:', message);
+    throw internalError('获取本地媒体失败');
   }
 });
 
 // 扫描媒体目录
-router.post('/scan', async (req, res) => {
+router.post('/scan', async (req: TypedRequest<Record<string, string>, { path?: string }>, res: TypedResponse<Record<string, unknown>>) => {
   try {
     let rootPath = req.body.path;
 
@@ -131,7 +142,7 @@ router.post('/scan', async (req, res) => {
     }
 
     if (!rootPath) {
-      return res.status(400).json({ error: '请提供媒体目录路径，或在设置中配置 media_root' });
+      throw badRequest('请提供媒体目录路径，或在设置中配置 media_root');
     }
 
     const result = await scanDirectory(rootPath);
@@ -154,32 +165,39 @@ router.post('/scan', async (req, res) => {
       ...result,
       message: `新增 ${result.added}，更新 ${result.updated}，跳过 ${result.skipped}，错误 ${result.errors.length}`,
     });
-  } catch (err: any) {
-    res.status(500).json({ error: `扫描失败: ${err.message}` });
+  } catch (err: unknown) {
+    if (err instanceof Error && 'statusCode' in err) throw err;
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('Scan error:', message);
+    throw internalError(`扫描失败: ${message}`);
   }
 });
 
 // 从 TMDB 添加到本地收藏
-router.post('/save', async (req, res) => {
+router.post('/save', async (req: TypedRequest<Record<string, string>, { tmdb_id: number; media_type: string; title?: string }>, res: TypedResponse<{ id: number; success: boolean }>) => {
   try {
     const { tmdb_id, media_type, title } = req.body;
     if (!tmdb_id || !media_type) {
-      return res.status(400).json({ error: '缺少必要参数' });
+      throw badRequest('缺少必要参数');
     }
-    const id = await addToLocal(tmdb_id, media_type, title);
-    invalidateCaches(media_type, tmdb_id);
+    const type = media_type as 'movie' | 'tv';
+    const id = await addToLocal(tmdb_id, type, title ?? '');
+    invalidateCaches(type, tmdb_id);
 
     // 后台预热该影片的详情缓存（单次请求）
-    getDetailFull(media_type, tmdb_id).catch(() => {});
+    getDetailFull(type, tmdb_id).catch(() => {});
 
     res.json({ id, success: true });
-  } catch (err: any) {
-    res.status(500).json({ error: `保存失败: ${err.message}` });
+  } catch (err: unknown) {
+    if (err instanceof Error && 'statusCode' in err) throw err;
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('Save error:', message);
+    throw internalError(`保存失败: ${message}`);
   }
 });
 
 // 从本地删除（同时删除影视文件夹）
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req: TypedRequest<{ id: string }>, res: TypedResponse<{ success: boolean }>) => {
   try {
     const id = parseInt(req.params.id);
     const rows: any[] = await query(
@@ -205,26 +223,29 @@ router.delete('/:id', async (req, res) => {
         }
         await fs.rm(dirToDelete, { recursive: true, force: true });
         console.log(`[Delete] 已删除文件夹: ${dirToDelete}`);
-      } catch (err: any) {
-        console.error(`[Delete] 文件夹删除失败: ${err.message}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : '未知错误';
+        console.error(`[Delete] 文件夹删除失败: ${message}`);
       }
     }
 
     if (ok) invalidateCaches(row.media_type, row.tmdb_id);
     res.json({ success: ok });
-  } catch (err: any) {
-    res.status(500).json({ error: '删除失败' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('Delete error:', message);
+    throw internalError('删除失败');
   }
 });
 
 // 本地影视详情（含 TMDB 元数据匹配）
-router.get('/detail/:id', async (req, res) => {
+router.get('/detail/:id', async (req: TypedRequest<{ id: string }>, res: TypedResponse<Record<string, unknown>>) => {
   try {
     const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: '无效的 ID' });
+    if (isNaN(id)) throw badRequest('无效的 ID');
 
     const rows: any[] = await query('SELECT * FROM local_media WHERE id = ?', [id]);
-    if (rows.length === 0) return res.status(404).json({ error: '未找到该本地媒体' });
+    if (rows.length === 0) throw notFound('未找到该本地媒体');
 
     const local = rows[0];
     let detail: any = null;
@@ -243,7 +264,7 @@ router.get('/detail/:id', async (req, res) => {
       if (local.year) searchText += ` ${local.year}`;
       const { items: results } = await searchMedia(searchText, 1);
 
-      const match = results.find((r: any) => {
+      const match = results.find((r) => {
         const titleMatch = r.title.toLowerCase() === local.title.toLowerCase();
         const yearMatch = !local.year || r.year === String(local.year);
         return titleMatch || (r.title.includes(local.title.slice(0, 6)) && yearMatch);
@@ -258,6 +279,11 @@ router.get('/detail/:id', async (req, res) => {
         }
       }
     }
+
+    // NFO 本地数据（评分、流媒体信息、clearlogo）
+    const nfoRatings = local.nfo_ratings ? (typeof local.nfo_ratings === 'string' ? JSON.parse(local.nfo_ratings) : local.nfo_ratings) : [];
+    const streamInfo = local.stream_info ? (typeof local.stream_info === 'string' ? JSON.parse(local.stream_info) : local.stream_info) : null;
+    const clearlogoUrl = local.clearlogo_path ? `/api/local/file?path=${encodeURIComponent(local.clearlogo_path)}` : null;
 
     if (!detail) {
       return res.json({
@@ -277,12 +303,18 @@ router.get('/detail/:id', async (req, res) => {
         isLocal: true,
         localPath: local.local_path,
         localId: local.id,
+        nfoRatings,
+        streamInfo,
+        clearlogoPath: clearlogoUrl,
       });
     }
 
     detail.isLocal = true;
     detail.localId = local.id;
     detail.localPath = local.local_path;
+    detail.nfoRatings = nfoRatings;
+    detail.streamInfo = streamInfo;
+    detail.clearlogoPath = clearlogoUrl;
 
     if (local.poster_path) {
       detail.posterPath = `/api/local/file?path=${encodeURIComponent(local.poster_path)}`;
@@ -292,26 +324,31 @@ router.get('/detail/:id', async (req, res) => {
     }
 
     res.json(detail);
-  } catch (err: any) {
-    console.error('Local detail error:', err.message);
-    res.status(500).json({ error: '获取本地详情失败' });
+  } catch (err: unknown) {
+    if (err instanceof Error && 'statusCode' in err) throw err;
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('Local detail error:', message);
+    throw internalError('获取本地详情失败');
   }
 });
 
 // 播放本地媒体
-router.post('/play/:id', async (req, res) => {
+router.post('/play/:id', async (req: TypedRequest<{ id: string }>, res: TypedResponse<Record<string, unknown>>) => {
   try {
     const id = parseInt(req.params.id);
     const rows: any[] = await query('SELECT local_path FROM local_media WHERE id = ?', [id]);
 
     if (rows.length === 0) {
-      return res.status(404).json({ error: '未找到该媒体' });
+      throw notFound('未找到该媒体');
     }
 
     const result = await playWithPotPlayer(rows[0].local_path);
     res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: `播放失败: ${err.message}` });
+  } catch (err: unknown) {
+    if (err instanceof Error && 'statusCode' in err) throw err;
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('Play error:', message);
+    throw internalError(`播放失败: ${message}`);
   }
 });
 

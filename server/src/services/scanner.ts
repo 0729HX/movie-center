@@ -21,6 +21,7 @@ interface ProcessResult {
 const VIDEO_EXTS = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.m4v', '.ts', '.iso', '.flv', '.webm', '.rmvb', '.mts', '.m2ts', '.vob', '.rm', '.3gp', '.divx', '.xvid', '.ogm', '.ogv', '.asf'];
 const POSTER_NAMES = ['poster.jpg', 'poster.png', 'folder.jpg', 'cover.jpg', 'movie.jpg'];
 const BACKDROP_NAMES = ['backdrop.jpg', 'fanart.jpg', 'background.jpg', 'backdrop.png'];
+const CLEARLOGO_NAMES = ['clearlogo.png', 'clearlogo.jpg'];
 
 /**
  * 递归扫描目录，自动下钻查找所有影视文件
@@ -89,6 +90,114 @@ async function walkDir(
   }
 }
 
+interface NfoData {
+  tmdbId: number | null;
+  ratings: { source: string; displayName: string; score: number; maxScore: number; icon: string }[];
+  streamInfo: { video?: { codec?: string; width?: number; height?: number; resolution?: string }; audio?: { codec?: string; channels?: number; language?: string }; subtitles?: string[] };
+}
+
+const RATING_MAP: Record<string, { displayName: string; maxScore: number; icon: string }> = {
+  imdb:                { displayName: 'IMDb',       maxScore: 10,  icon: 'imdb' },
+  themoviedb:          { displayName: 'TMDB',       maxScore: 10,  icon: 'tmdb' },
+  tomatometerallcritics:{ displayName: 'RT',        maxScore: 100, icon: 'rt' },
+  tomatometerrotten:   { displayName: 'RT',         maxScore: 100, icon: 'rt' },
+  metacritic:          { displayName: 'Metacritic', maxScore: 100, icon: 'metacritic' },
+  rogerebert:          { displayName: 'Roger Ebert',maxScore: 4,   icon: 'rogerebert' },
+  letterboxd:          { displayName: 'Letterboxd', maxScore: 5,   icon: 'letterboxd' },
+  trakt:               { displayName: 'Trakt',      maxScore: 10,  icon: 'trakt' },
+};
+
+/**
+ * 解析 NFO 文件，提取 TMDB ID、多源评分、流媒体信息
+ */
+async function parseNfoFile(
+  dirPath: string,
+  files: Dirent[],
+  fs: typeof import('fs/promises'),
+): Promise<NfoData> {
+  const result: NfoData = { tmdbId: null, ratings: [], streamInfo: {} };
+
+  // 查找 NFO 文件：movie.nfo / tvshow.nfo 优先，否则取第一个 .nfo
+  let nfoPath: string | null = null;
+  for (const name of ['movie.nfo', 'tvshow.nfo']) {
+    if (files.some(f => f.name === name)) { nfoPath = path.join(dirPath, name); break; }
+  }
+  if (!nfoPath) {
+    const nfo = files.find(f => f.name.endsWith('.nfo'));
+    if (nfo) nfoPath = path.join(dirPath, nfo.name);
+  }
+  if (!nfoPath) return result;
+
+  let content: string;
+  try {
+    content = await fs.readFile(nfoPath, 'utf-8');
+  } catch {
+    return result;
+  }
+
+  // TMDB ID
+  let m = content.match(/<tmdbid>(\d+)<\/tmdbid>/i);
+  if (!m) m = content.match(/<uniqueid\s+type=["']tmdb["'][^>]*>(\d+)<\/uniqueid>/i);
+  if (m) result.tmdbId = parseInt(m[1]);
+
+  // 多源评分
+  const ratingsBlock = content.match(/<ratings>([\s\S]*?)<\/ratings>/i);
+  if (ratingsBlock) {
+    const ratingRe = /<rating\s+name=["']([^"']+)["'][^>]*>[\s\S]*?<\/rating>/gi;
+    let rm: RegExpExecArray | null;
+    while ((rm = ratingRe.exec(ratingsBlock[1])) !== null) {
+      const source = rm[1].toLowerCase();
+      const meta = RATING_MAP[source];
+      if (!meta) continue;
+      const valMatch = rm[0].match(/<value>([0-9.]+)<\/value>/);
+      if (valMatch) {
+        result.ratings.push({ source, ...meta, score: parseFloat(valMatch[1]) });
+      }
+    }
+  }
+
+  // 流媒体信息
+  const fiMatch = content.match(/<fileinfo>([\s\S]*?)<\/fileinfo>/i);
+  if (fiMatch) {
+    const fi = fiMatch[1];
+    const vm = fi.match(/<video>([\s\S]*?)<\/video>/i);
+    if (vm) {
+      const v = vm[1];
+      const video: NfoData['streamInfo']['video'] = {};
+      let cm = v.match(/<codec>([^<]+)<\/codec>/i);
+      if (cm) video.codec = cm[1].trim();
+      const wm = v.match(/<width>(\d+)<\/width>/i);
+      const hm = v.match(/<height>(\d+)<\/height>/i);
+      if (wm) video.width = parseInt(wm[1]);
+      if (hm) video.height = parseInt(hm[1]);
+      if (wm && hm) video.resolution = `${wm[1]}x${hm[1]}`;
+      if (Object.keys(video).length > 0) result.streamInfo.video = video;
+    }
+    const am = fi.match(/<audio>([\s\S]*?)<\/audio>/i);
+    if (am) {
+      const a = am[1];
+      const audio: NfoData['streamInfo']['audio'] = {};
+      let cm = a.match(/<codec>([^<]+)<\/codec>/i);
+      if (cm) audio.codec = cm[1].trim();
+      const chm = a.match(/<channels>(\d+)<\/channels>/i);
+      if (chm) audio.channels = parseInt(chm[1]);
+      const lm = a.match(/<language>([^<]+)<\/language>/i);
+      if (lm) audio.language = lm[1].trim();
+      if (Object.keys(audio).length > 0) result.streamInfo.audio = audio;
+    }
+    const subs: string[] = [];
+    const subRe = /<subtitle>([\s\S]*?)<\/subtitle>/gi;
+    let sm: RegExpExecArray | null;
+    while ((sm = subRe.exec(fi)) !== null) {
+      const lm = sm[1].match(/<language>([^<]+)<\/language>/i);
+      if (lm) subs.push(lm[1].trim());
+    }
+    if (subs.length > 0) result.streamInfo.subtitles = subs;
+  }
+
+  return result;
+}
+
 /**
  * 处理单个媒体目录：提取视频、海报、背景、NFO，按文件路径去重写入数据库
  */
@@ -128,7 +237,7 @@ async function processMediaDir(
 
   // === 去重：按 local_path 检查是否已存在 ===
   const existing: any[] = await query(
-    'SELECT id, tmdb_id, poster_path, backdrop_path, file_size FROM local_media WHERE local_path = ?',
+    'SELECT id, tmdb_id, poster_path, backdrop_path, clearlogo_path, file_size, nfo_ratings, stream_info FROM local_media WHERE local_path = ?',
     [videoPath],
   );
 
@@ -159,24 +268,20 @@ async function processMediaDir(
     if (found) { backdropPath = path.join(dirPath, found.name); break; }
   }
 
-  // === NFO 解析 TMDB ID ===
-  let tmdbId: number | null = null;
-  for (const file of files) {
-    if (file.name === 'movie.nfo' || file.name === 'tvshow.nfo') {
-      try {
-        const nfoContent = await fs.readFile(path.join(dirPath, file.name), 'utf-8');
-        // 兼容多种 NFO 格式：
-        //   1. TMM v4: <tmdbid>12345</tmdbid>
-        //   2. Kodi/Emby: <uniqueid type="tmdb" default="true">12345</uniqueid>
-        let match = nfoContent.match(/<tmdbid>(\d+)<\/tmdbid>/i);
-        if (!match) {
-          match = nfoContent.match(/<uniqueid\s+type=["']tmdb["'][^>]*>(\d+)<\/uniqueid>/i);
-        }
-        if (match) tmdbId = parseInt(match[1]);
-      } catch { /* skip */ }
-      break;
-    }
+  // === NFO 解析（TMDB ID + 多源评分 + 流媒体信息）===
+  const nfoData = await parseNfoFile(dirPath, files, fs);
+  const tmdbId = nfoData.tmdbId;
+
+  // === 查找 clearlogo ===
+  let clearlogoPath = '';
+  for (const name of CLEARLOGO_NAMES) {
+    const found = files.find(f => f.name.toLowerCase() === name.toLowerCase());
+    if (found) { clearlogoPath = path.join(dirPath, found.name); break; }
   }
+
+  // 序列化 JSON 字段
+  const nfoRatingsJson = nfoData.ratings.length > 0 ? JSON.stringify(nfoData.ratings) : null;
+  const streamInfoJson = Object.keys(nfoData.streamInfo).length > 0 ? JSON.stringify(nfoData.streamInfo) : null;
 
   // === 从目录名提取标题和年份 ===
   const titleMatch = dirName.match(/^(.+?)\s*\(?(\d{4})\)?\s*$/);
@@ -199,7 +304,10 @@ async function processMediaDir(
       row.tmdb_id === tmdbId &&
       row.poster_path === posterPath &&
       row.backdrop_path === backdropPath &&
-      row.file_size === stat.size;
+      row.clearlogo_path === clearlogoPath &&
+      row.file_size === stat.size &&
+      row.nfo_ratings === nfoRatingsJson &&
+      row.stream_info === streamInfoJson;
 
     if (sameData) {
       return { status: 'skipped', tmdbId, mediaType };
@@ -207,18 +315,18 @@ async function processMediaDir(
 
     // 数据有变化 → 更新
     await query(
-      `UPDATE local_media SET tmdb_id=?, media_type=?, title=?, year=?, poster_path=?, backdrop_path=?, file_size=?, updated_at=NOW()
+      `UPDATE local_media SET tmdb_id=?, media_type=?, title=?, year=?, poster_path=?, backdrop_path=?, clearlogo_path=?, file_size=?, nfo_ratings=?, stream_info=?, updated_at=NOW()
        WHERE id=?`,
-      [tmdbId, mediaType, title, year || null, posterPath || null, backdropPath || null, stat.size, row.id],
+      [tmdbId, mediaType, title, year || null, posterPath || null, backdropPath || null, clearlogoPath || null, stat.size, nfoRatingsJson, streamInfoJson, row.id],
     );
     return { status: 'updated', tmdbId, mediaType };
   }
 
   // === 新记录 → 插入 ===
   await query(
-    `INSERT INTO local_media (tmdb_id, media_type, title, year, local_path, poster_path, backdrop_path, file_size)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [tmdbId, mediaType, title, year || null, videoPath, posterPath || null, backdropPath || null, stat.size],
+    `INSERT INTO local_media (tmdb_id, media_type, title, year, local_path, poster_path, backdrop_path, clearlogo_path, file_size, nfo_ratings, stream_info)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [tmdbId, mediaType, title, year || null, videoPath, posterPath || null, backdropPath || null, clearlogoPath || null, stat.size, nfoRatingsJson, streamInfoJson],
   );
   return { status: 'added', tmdbId, mediaType };
 }

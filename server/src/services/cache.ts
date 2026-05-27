@@ -34,6 +34,38 @@ export async function cacheSet(key: string, data: unknown, ttlSeconds: number): 
 }
 
 /**
+ * 原子递增计数器，返回递增后的值
+ */
+export async function cacheIncr(key: string): Promise<number> {
+  try {
+    return await redis.incr(PREFIX + key);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * 设置 key 的过期时间（秒）
+ */
+export async function cacheExpire(key: string, ttlSeconds: number): Promise<void> {
+  try {
+    await redis.expire(PREFIX + key, ttlSeconds);
+  } catch { /* 静默 */ }
+}
+
+/**
+ * 读取计数器值，不存在返回 0
+ */
+export async function cacheCount(key: string): Promise<number> {
+  try {
+    const raw = await redis.get(PREFIX + key);
+    return raw ? parseInt(raw, 10) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * 按前缀模式删除缓存，例如 cacheDel('movies:*') 删除所有电影列表缓存
  */
 export async function cacheDel(pattern: string): Promise<void> {

@@ -2,8 +2,7 @@ import { createContext, useCallback, useContext, type ReactNode } from 'react'
 import type { MediaWithRatings, Recommendation } from '../types'
 import { DataContext } from './DataContext'
 import { AppContext } from './AppContext'
-
-const API_BASE = '/api'
+import { api } from '../api/client'
 
 interface DetailContextValue {
   handleSelect: (item: MediaWithRatings) => Promise<void>
@@ -27,12 +26,9 @@ export function DetailContextProvider({ children }: { children: ReactNode }) {
       if (item.localId) {
         dispatch({ type: 'SET_DETAIL_LOADING', payload: true })
         try {
-          const res = await fetch(`${API_BASE}/local/detail/${item.localId}`)
-          if (res.ok) {
-            const detail = await res.json()
-            dispatch({ type: 'SET_SELECTED_MEDIA', payload: detail })
-            if (detail.tmdbId > 0 && !item.tmdbId) fetchLocal()
-          }
+          const detail = await api.local.detail(item.localId)
+          dispatch({ type: 'SET_SELECTED_MEDIA', payload: detail })
+          if (detail.tmdbId > 0 && !item.tmdbId) fetchLocal()
         } catch { /* 列表数据兜底 */ }
         dispatch({ type: 'SET_DETAIL_LOADING', payload: false })
       }
@@ -41,8 +37,7 @@ export function DetailContextProvider({ children }: { children: ReactNode }) {
 
     dispatch({ type: 'SET_DETAIL_LOADING', payload: true })
     try {
-      const res = await fetch(`${API_BASE}/detail/${item.mediaType}/${item.tmdbId}`)
-      const detail = await res.json()
+      const detail = await api.detail.get(item.mediaType, item.tmdbId)
       dispatch({ type: 'SET_SELECTED_MEDIA', payload: detail })
     } catch { /* 列表数据已经显示 */ }
     dispatch({ type: 'SET_DETAIL_LOADING', payload: false })
@@ -51,14 +46,10 @@ export function DetailContextProvider({ children }: { children: ReactNode }) {
   const handleSaveLocal = useCallback(async (item: MediaWithRatings) => {
     // 乐观更新
     dispatch({ type: 'UPDATE_SELECTED_MEDIA', payload: { isLocal: true } })
-    await fetch(`${API_BASE}/local/save`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tmdb_id: item.tmdbId,
-        media_type: item.mediaType,
-        title: item.title,
-      }),
+    await api.local.save({
+      tmdb_id: item.tmdbId,
+      media_type: item.mediaType,
+      title: item.title,
     })
     fetchLocal()
   }, [dispatch, fetchLocal])
@@ -71,7 +62,7 @@ export function DetailContextProvider({ children }: { children: ReactNode }) {
       type: 'UPDATE_SELECTED_MEDIA',
       payload: { isLocal: false, localId: undefined, localPath: undefined },
     })
-    await fetch(`${API_BASE}/local/${id}`, { method: 'DELETE' })
+    await api.local.delete(id)
     fetchLocal()
   }, [dispatch, fetchLocal])
 

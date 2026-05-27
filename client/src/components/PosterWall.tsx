@@ -1,6 +1,7 @@
 import { useRef, useEffect, memo, type FC } from 'react'
 import type { MediaWithRatings } from '../types'
 import PosterCard from './PosterCard'
+import { SkeletonWall } from './Skeleton'
 
 interface Props {
   items: MediaWithRatings[]
@@ -96,11 +97,7 @@ const PosterWall: FC<Props> = ({
 
       {/* 内容 */}
       {loading ? (
-        <div className="skeleton-row">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="skeleton skeleton-poster" />
-          ))}
-        </div>
+        <SkeletonWall count={12} />
       ) : items.length === 0 ? (
         <div className="local-empty">
           <div className="empty-icon">🎬</div>

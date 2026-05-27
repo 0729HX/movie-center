@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS local_media (
   local_path TEXT NOT NULL,           -- 本地视频文件绝对路径
   poster_path VARCHAR(1000),          -- 本地海报路径
   backdrop_path VARCHAR(1000),        -- 本地背景图路径
+  clearlogo_path VARCHAR(1000),       -- 本地清晰logo路径
   file_size BIGINT DEFAULT 0,         -- 文件大小（字节）
+  nfo_ratings JSON,                   -- NFO多源评分 [{source,displayName,score,maxScore,icon}]
+  stream_info JSON,                   -- 流媒体信息 {video:{codec,resolution},audio:{codec,channels},subtitles:[]}
   added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_local_path (local_path(255)),
@@ -25,7 +28,7 @@ CREATE TABLE IF NOT EXISTS local_media (
   INDEX idx_tmdb (tmdb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 评分缓存表（OMDb 多源评分 + 豆瓣评分本地缓存）
+-- 评分缓存表（OMDb 多源评分本地缓存）
 CREATE TABLE IF NOT EXISTS rating_cache (
   imdb_id VARCHAR(20) NOT NULL,
   tmdb_id INT NOT NULL,
@@ -33,8 +36,6 @@ CREATE TABLE IF NOT EXISTS rating_cache (
   imdb_score DECIMAL(3,1),            -- IMDb 评分 (0-10)
   tomatoes_score VARCHAR(10),         -- Rotten Tomatoes (如 "80%")
   metacritic_score INT,               -- Metacritic (0-100)
-  douban_id VARCHAR(20),              -- 豆瓣 subject ID
-  douban_score DECIMAL(2,1),          -- 豆瓣评分 (0-10)
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (imdb_id),
   INDEX idx_tmdb (tmdb_id)

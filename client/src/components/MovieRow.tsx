@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, memo, type FC } from 'react'
 import type { MediaWithRatings } from '../types'
 import PosterCard from './PosterCard'
+import { SkeletonRow } from './Skeleton'
 
 interface Props {
   title: string
@@ -28,11 +29,7 @@ const MovieRow: FC<Props> = ({ title, items, loading }) => {
       <h2 className="section-title">{title}</h2>
 
       {loading ? (
-        <div className="skeleton-row">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="skeleton skeleton-poster" />
-          ))}
-        </div>
+        <SkeletonRow count={8} />
       ) : (
         <div style={{ position: 'relative' }}>
           <div className="scroll-row" ref={scrollRef}>

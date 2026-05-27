@@ -96,6 +96,29 @@ export interface MediaWithRatings {
 
 // === 本地媒体类型 ===
 
+export interface NfoRating {
+  source: string;      // 'imdb' | 'tmdb' | 'rt' | 'metacritic' 等
+  displayName: string;  // 'IMDb' | 'TMDB' 等
+  score: number;
+  maxScore: number;
+  icon: string;         // 图标标识
+}
+
+export interface StreamInfo {
+  video?: {
+    codec?: string;       // 'hevc' | 'h264' 等
+    width?: number;
+    height?: number;
+    resolution?: string;  // '3840x2160'
+  };
+  audio?: {
+    codec?: string;       // 'dts' | 'aac' 等
+    channels?: number;
+    language?: string;
+  };
+  subtitles?: string[];   // 字幕语言列表 ['chi', 'eng']
+}
+
 export interface LocalMedia {
   id: number;
   tmdb_id: number;
@@ -105,7 +128,10 @@ export interface LocalMedia {
   local_path: string;
   poster_path: string | null;
   backdrop_path: string | null;
+  clearlogo_path: string | null;
   file_size: number;
+  nfo_ratings: NfoRating[] | null;
+  stream_info: StreamInfo | null;
   added_at: string;
 }
 

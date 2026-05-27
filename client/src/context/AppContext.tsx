@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, type ReactNode } from 'react'
 import { DataContext } from './DataContext'
+import { api } from '../api/client'
 
-const API_BASE = '/api'
 const CACHE_TTL = 5 * 60 * 1000
 
 interface AppContextValue {
@@ -27,66 +27,56 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
 
   const fetchTrending = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/trending`)
-      const data = await res.json()
+      const data = await api.trending.get()
       dispatch({ type: 'SET_TRENDING', payload: data.items || [] })
-    } catch (err: any) {
-      console.error('fetchTrending 失败:', err.message)
+    } catch (err: unknown) {
+      console.error('fetchTrending 失败:', err instanceof Error ? err.message : err)
       dispatch({ type: 'SET_TRENDING', payload: [] })
     }
   }, [dispatch])
 
   const fetchMovies = useCallback(async (pageNum = 1, genre = '') => {
     try {
-      const params = new URLSearchParams({ page: String(pageNum) })
-      if (genre) params.set('genre', genre)
-      const res = await fetch(`${API_BASE}/movies?${params}`)
-      const data = await res.json()
+      const data = await api.movies.list(pageNum, genre)
       dispatch({
         type: 'SET_MOVIES',
         payload: { items: data.items || [], page: pageNum, totalPages: data.totalPages || 1 },
       })
-    } catch (err: any) {
-      console.error('fetchMovies 失败:', err.message)
+    } catch (err: unknown) {
+      console.error('fetchMovies 失败:', err instanceof Error ? err.message : err)
       if (pageNum === 1) dispatch({ type: 'SET_MOVIES', payload: { items: [], page: 1, totalPages: 1 } })
     }
   }, [dispatch])
 
   const fetchTv = useCallback(async (pageNum = 1, genre = '') => {
     try {
-      const params = new URLSearchParams({ page: String(pageNum) })
-      if (genre) params.set('genre', genre)
-      const res = await fetch(`${API_BASE}/tv?${params}`)
-      const data = await res.json()
+      const data = await api.tv.list(pageNum, genre)
       dispatch({
         type: 'SET_TV',
         payload: { items: data.items || [], page: pageNum, totalPages: data.totalPages || 1 },
       })
-    } catch (err: any) {
-      console.error('fetchTv 失败:', err.message)
+    } catch (err: unknown) {
+      console.error('fetchTv 失败:', err instanceof Error ? err.message : err)
       if (pageNum === 1) dispatch({ type: 'SET_TV', payload: { items: [], page: 1, totalPages: 1 } })
     }
   }, [dispatch])
 
   const fetchLocal = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/local`)
-      const data = await res.json()
+      const data = await api.local.list()
       dispatch({ type: 'SET_LOCAL', payload: data.items || [] })
-    } catch (err: any) {
-      console.error('fetchLocal 失败:', err.message)
+    } catch (err: unknown) {
+      console.error('fetchLocal 失败:', err instanceof Error ? err.message : err)
       dispatch({ type: 'SET_LOCAL', payload: [] })
     }
   }, [dispatch])
 
   const fetchGenres = useCallback(async () => {
     try {
-      const [mRes, tRes] = await Promise.all([
-        fetch(`${API_BASE}/movies/genres`),
-        fetch(`${API_BASE}/tv/genres`),
+      const [mData, tData] = await Promise.all([
+        api.movies.genres(),
+        api.tv.genres(),
       ])
-      const mData = await mRes.json()
-      const tData = await tRes.json()
       dispatch({ type: 'SET_MOVIE_GENRES', payload: mData.genres || [] })
       dispatch({ type: 'SET_TV_GENRES', payload: tData.genres || [] })
     } catch {}
@@ -114,8 +104,8 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
       } else {
         dispatch({ type: 'SET_LAST_FETCH_TIME', payload: now })
       }
-    } catch (err: any) {
-      console.error('loadAll 异常:', err.message)
+    } catch (err: unknown) {
+      console.error('loadAll 异常:', err instanceof Error ? err.message : err)
       dispatch({ type: 'SET_ERROR', payload: '加载失败，请刷新页面重试' })
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false })
@@ -132,8 +122,7 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
     else dispatch({ type: 'SET_LOADING_MORE', payload: true })
     dispatch({ type: 'SET_ERROR', payload: null })
     try {
-      const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}&page=${page}`)
-      const data = await res.json()
+      const data = await api.search(q, page)
       dispatch({
         type: 'SET_SEARCH_RESULTS',
         payload: {
@@ -143,8 +132,8 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
           totalResults: data.totalResults || 0,
         },
       })
-    } catch (err: any) {
-      console.error('搜索失败:', err.message)
+    } catch (err: unknown) {
+      console.error('搜索失败:', err instanceof Error ? err.message : err)
       dispatch({ type: 'SET_ERROR', payload: '搜索请求失败，请检查网络连接' })
       if (page === 1) dispatch({ type: 'CLEAR_SEARCH_RESULTS' })
     } finally {

@@ -1,4 +1,4 @@
-import { useState, useEffect, type FC } from 'react'
+import { useState, useEffect, useCallback, type FC } from 'react'
 
 interface Settings {
   potplayer_path: string
@@ -33,6 +33,14 @@ const SettingsPanel: FC = () => {
   const [loading, setLoading] = useState(true)
   const [watcherActive, setWatcherActive] = useState(false)
   const [watcherMsg, setWatcherMsg] = useState('')
+  const [omdbUsage, setOmdbUsage] = useState<{ key: string; usage: number; limit: number; remaining: number }[]>([])
+
+  const fetchOmdbUsage = useCallback(async () => {
+    try {
+      const res = await fetch('/api/config/omdb-usage')
+      if (res.ok) setOmdbUsage(await res.json())
+    } catch { /* 静默 */ }
+  }, [])
 
   useEffect(() => {
     fetch('/api/config')
@@ -52,6 +60,8 @@ const SettingsPanel: FC = () => {
       .catch(() => {})
       .finally(() => setLoading(false))
 
+    fetchOmdbUsage()
+
     fetch('/api/watcher/status')
       .then(r => r.json())
       .then(s => setWatcherActive(s.active))
@@ -66,6 +76,7 @@ const SettingsPanel: FC = () => {
     })
     setSaved(true)
     setTimeout(() => setSaved(false), 3000)
+    fetchOmdbUsage()
   }
 
   const update = (key: keyof Settings, value: string) => {
@@ -134,15 +145,32 @@ const SettingsPanel: FC = () => {
       </div>
       <div className="settings-group">
         <label>OMDb API Key</label>
-        <input
-          type="text"
-          value={settings.omdb_api_key}
-          onChange={e => update('omdb_api_key', e.target.value)}
-          placeholder="留空则仅显示 TMDB 评分"
+        <textarea
+          className="settings-textarea"
+          value={settings.omdb_api_key.split(',').map(k => k.trim()).filter(Boolean).join('\n')}
+          onChange={e => update('omdb_api_key', e.target.value.split('\n').map(k => k.trim()).filter(Boolean).join(','))}
+          placeholder="每行一个 key，留空则仅显示 TMDB 评分"
+          rows={3}
         />
         <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 6 }}>
-          用于获取 IMDb、Rotten Tomatoes、Metacritic 评分
+          用于获取 IMDb、Rotten Tomatoes、Metacritic 评分。支持多个 key 自动轮换（免费 1000 次/天）
         </p>
+        {omdbUsage.length > 0 && (
+          <div className="omdb-usage-list">
+            {omdbUsage.map(s => (
+              <div key={s.key} className="omdb-usage-item">
+                <span className="omdb-usage-key">***{s.key}</span>
+                <div className="omdb-usage-bar">
+                  <div
+                    className={`omdb-usage-fill${s.remaining === 0 ? ' exhausted' : ''}`}
+                    style={{ width: `${Math.min(100, (s.usage / s.limit) * 100)}%` }}
+                  />
+                </div>
+                <span className="omdb-usage-text">{s.usage}/{s.limit}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* === TMM 刮削 === */}

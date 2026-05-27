@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 
+import { errorHandler, badRequest, notFound, internalError } from './middleware/errorHandler';
 import trendingRouter from './routes/trending';
 import moviesRouter from './routes/movies';
 import tvRouter from './routes/tv';
@@ -31,9 +32,9 @@ app.use('/api/watcher', watcherRouter);
 
 // 本地海报文件服务（处理 Windows 绝对路径如 H:\movies\...）
 // 使用查询参数方式避免 URL 路径中的冒号问题
-app.get('/api/local/file', (req, res) => {
+app.get('/api/local/file', (req, res, next) => {
   const filePath = req.query.path as string;
-  if (!filePath) return res.status(400).json({ error: '缺少 path 参数' });
+  if (!filePath) return next(badRequest('缺少 path 参数'));
 
   const decodedPath = decodeURIComponent(filePath);
 
@@ -42,10 +43,10 @@ app.get('/api/local/file', (req, res) => {
   try {
     stat = fs.statSync(decodedPath);
   } catch {
-    return res.status(404).json({ error: '文件不存在' });
+    return next(notFound('文件不存在'));
   }
   if (stat.isDirectory()) {
-    return res.status(400).json({ error: '路径是目录' });
+    return next(badRequest('路径是目录'));
   }
 
   const ext = path.extname(decodedPath).toLowerCase();
@@ -63,7 +64,7 @@ app.get('/api/local/file', (req, res) => {
   const stream = fs.createReadStream(decodedPath);
   stream.on('error', (err) => {
     console.error(`[FileServe] ${decodedPath}: ${err.message}`);
-    if (!res.headersSent) res.status(500).end();
+    if (!res.headersSent) next(internalError('文件读取失败'));
   });
   stream.pipe(res);
 });
@@ -73,13 +74,8 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// 全局错误处理（防止崩溃）
-app.use((err: any, _req: any, res: any, _next: any) => {
-  console.error('[Express Error]', err.message);
-  if (!res.headersSent) {
-    res.status(500).json({ error: '服务器内部错误' });
-  }
-});
+// 全局错误处理
+app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`✓ Movie Center Server running at http://localhost:${PORT}`);

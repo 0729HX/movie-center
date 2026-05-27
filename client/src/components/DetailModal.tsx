@@ -1,5 +1,5 @@
 import { useState, type FC, useEffect } from 'react'
-import type { MediaWithRatings, Recommendation } from '../types'
+import type { MediaWithRatings, Recommendation, NfoRating, StreamInfo } from '../types'
 import RatingBadge from './RatingBadge'
 import { useDetail } from '../context/hooks'
 
@@ -46,6 +46,37 @@ const RecCard: FC<{ title: string; year: string; posterPath: string | null; onCl
   )
 }
 
+/* 流媒体信息徽标 */
+const StreamBadges: FC<{ info: StreamInfo }> = ({ info }) => {
+  const badges: { label: string; cls: string }[] = []
+
+  if (info.video?.resolution) {
+    const [w, h] = info.video.resolution.split('x').map(Number)
+    let resLabel = info.video.resolution
+    if (h >= 2160) resLabel = '4K'
+    else if (h >= 1080) resLabel = '1080p'
+    else if (h >= 720) resLabel = '720p'
+    badges.push({ label: resLabel, cls: 'stream-badge-resolution' })
+  }
+  if (info.video?.codec) {
+    badges.push({ label: info.video.codec.toUpperCase(), cls: 'stream-badge-codec' })
+  }
+  if (info.audio?.codec) {
+    const audioLabel = info.audio.codec.toUpperCase() + (info.audio.channels ? ` ${info.audio.channels}ch` : '')
+    badges.push({ label: audioLabel, cls: 'stream-badge-audio' })
+  }
+
+  if (badges.length === 0) return null
+
+  return (
+    <div className="stream-badges">
+      {badges.map((b, i) => (
+        <span key={i} className={`stream-badge ${b.cls}`}>{b.label}</span>
+      ))}
+    </div>
+  )
+}
+
 const DetailModal: FC<Props> = ({ media, loading }) => {
   const { handleCloseDetail, handleSaveLocal, handleRemoveLocal, handleSelectRecommendation } = useDetail()
   const [backdropError, setBackdropError] = useState(false)
@@ -83,13 +114,18 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
   const cast = media.credits || []
   const recs = media.recommendations || []
 
+  // NFO 本地数据
+  const nfoRatings = media.nfoRatings || []
+  const streamInfo = media.streamInfo
+  const clearlogoPath = media.clearlogoPath
+
   const statusMap: Record<string, string> = {
     'Released': '已上映', 'Returning Series': '连载中', 'Ended': '已完结', 'In Production': '制作中',
   }
 
   return (
     <div className="modal-overlay" onClick={handleOverlayClick}>
-      <div className="modal-content" style={{ animation: 'modalEnter 0.35s var(--ease-out-expo)' }}>
+      <div className="modal-content" style={{ animation: 'modalEnter 0.35s var(--ease-dramatic)' }}>
         <button className="modal-close-btn" onClick={handleCloseDetail} style={{ zIndex: 3 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <path d="M18 6 6 18M6 6l12 12" />
@@ -97,7 +133,7 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
         </button>
 
         {/* 横幅 */}
-        <div style={{ position: 'relative' }}>
+        <div className="modal-backdrop-wrap">
           {hasBackdrop ? (
             <>
               <img className="modal-backdrop-img" src={media.backdropPath!} alt=""
@@ -110,6 +146,11 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
             </div>
           ) : (
             <div className="modal-backdrop-empty" />
+          )}
+
+          {/* Clearlogo */}
+          {clearlogoPath && (
+            <img className="modal-clearlogo" src={clearlogoPath} alt="" />
           )}
         </div>
 
@@ -150,7 +191,25 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
               </div>
             )}
 
+            {/* TMDB/OMDb 评分 */}
             <RatingBadge ratings={media.ratings} />
+
+            {/* NFO 本地评分 */}
+            {nfoRatings.length > 0 && (
+              <div className="rating-badges" style={{ marginTop: 6 }}>
+                {nfoRatings.map((r: NfoRating, i: number) => (
+                  <span key={i} className="rating-badge">
+                    <span className="badge-icon" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)', fontSize: 8, fontWeight: 800 }}>
+                      {r.displayName.charAt(0)}
+                    </span>
+                    <span className="badge-score">{r.score}{r.maxScore === 100 ? '' : `/${r.maxScore}`}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* 流媒体信息 */}
+            {streamInfo && <StreamBadges info={streamInfo} />}
           </div>
         </div>
 
@@ -224,7 +283,7 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
             <div style={{ display: 'flex', gap: 14, overflowX: 'auto', paddingBottom: 4 }}>
               {loading && recs.length === 0
                 ? Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} style={{ flexShrink: 0, width: 130 }}>
+                    <div key={i} style={{ flexShrink: 0, width: 140 }}>
                       <div className="skeleton skeleton-rec-poster" />
                       <div className="skeleton skeleton-rec-title" />
                       <div className="skeleton skeleton-rec-year" />

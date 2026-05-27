@@ -1,6 +1,7 @@
 import { type FC, useState, useEffect, useMemo, useCallback } from 'react'
 import type { LocalMedia, MediaWithRatings } from '../types'
 import { useApp, useDetail } from '../context/hooks'
+import { SkeletonWall } from './Skeleton'
 
 interface Props {
   items: LocalMedia[]
@@ -122,7 +123,9 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
       posterPath: item.poster_path
         ? (item.poster_path.startsWith('http') ? item.poster_path : `/api/local/file?path=${encodeURIComponent(item.poster_path)}`)
         : null,
-      backdropPath: null,
+      backdropPath: item.backdrop_path
+        ? (item.backdrop_path.startsWith('http') ? item.backdrop_path : `/api/local/file?path=${encodeURIComponent(item.backdrop_path)}`)
+        : null,
       year: String(item.year || ''),
       mediaType: item.media_type,
       ratings: [],
@@ -132,6 +135,11 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
       isLocal: true,
       localPath: item.local_path,
       localId: item.id,
+      nfoRatings: item.nfo_ratings || undefined,
+      streamInfo: item.stream_info || undefined,
+      clearlogoPath: item.clearlogo_path
+        ? (item.clearlogo_path.startsWith('http') ? item.clearlogo_path : `/api/local/file?path=${encodeURIComponent(item.clearlogo_path)}`)
+        : undefined,
     }
     handleSelect(mediaItem)
   }
@@ -289,11 +297,7 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
 
       {/* 列表 */}
       {loading ? (
-        <div className="skeleton-row">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="skeleton skeleton-poster" />
-          ))}
-        </div>
+        <SkeletonWall count={12} />
       ) : items.length === 0 ? (
         <div className="local-empty">
           <div className="empty-icon">
@@ -465,6 +469,21 @@ const LocalCard: FC<{
           {item.media_type === 'movie' ? '电影' : '剧集'}
           {item.file_size > 0 && ` · ${formatSize(item.file_size)}`}
         </div>
+        {/* 流媒体信息摘要 */}
+        {item.stream_info?.video?.resolution && (
+          <div className="card-stream-badges">
+            {(() => {
+              const h = parseInt(item.stream_info.video.resolution.split('x')[1] || '0')
+              if (h >= 2160) return <span className="card-stream-badge card-stream-4k">4K</span>
+              if (h >= 1080) return <span className="card-stream-badge card-stream-1080">1080p</span>
+              if (h >= 720) return <span className="card-stream-badge card-stream-720">720p</span>
+              return null
+            })()}
+            {item.stream_info.video?.codec && (
+              <span className="card-stream-badge card-stream-codec">{item.stream_info.video.codec.toUpperCase()}</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
