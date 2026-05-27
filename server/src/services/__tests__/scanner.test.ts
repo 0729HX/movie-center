@@ -209,6 +209,12 @@ describe('scanner service', () => {
         file_size: 5000,
         nfo_ratings: null,
         stream_info: null,
+        imdb_id: null,
+        nfo_plot: null,
+        nfo_genres: null,
+        nfo_runtime: null,
+        nfo_tagline: null,
+        nfo_actors: null,
       }])
       mockStat.mockResolvedValueOnce({ size: 5000 })
 
@@ -225,7 +231,16 @@ describe('scanner service', () => {
         tmdb_id: null,
         poster_path: '',
         backdrop_path: '',
+        clearlogo_path: '',
         file_size: 1000, // 旧大小
+        nfo_ratings: null,
+        stream_info: null,
+        imdb_id: null,
+        nfo_plot: null,
+        nfo_genres: null,
+        nfo_runtime: null,
+        nfo_tagline: null,
+        nfo_actors: null,
       }])
       mockStat.mockResolvedValueOnce({ size: 5000 }) // 新大小
       mockQuery.mockResolvedValueOnce({}) // UPDATE

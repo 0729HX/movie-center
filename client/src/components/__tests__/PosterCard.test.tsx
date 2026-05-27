@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import type { MediaWithRatings } from '../../types'
 
 // ======================== Mock 依赖 ========================
@@ -95,12 +95,19 @@ describe('PosterCard', () => {
       expect(img.src).toContain('poster.jpg')
     })
 
-    it('图片加载失败应显示占位符', () => {
+    it('图片加载失败应重试后显示占位符', () => {
       render(<PosterCard item={makeItem()} />)
       const img = screen.getByAltText('Inception')
-      fireEvent.error(img)
-      // 占位符应出现
-      expect(screen.getByText('🎬')).toBeDefined()
+      expect(img).toBeDefined()
+      // 第 1 次 error → retries=1, src 变为 ?retry=1
+      act(() => { fireEvent.error(img) })
+      expect(document.querySelector('.poster-img')?.getAttribute('src')).toContain('?retry=1')
+      // 第 2 次 error → retries=2, src 变为 ?retry=2
+      act(() => { fireEvent.error(img) })
+      expect(document.querySelector('.poster-img')?.getAttribute('src')).toContain('?retry=2')
+      // 第 3 次 error → 超过 MAX_RETRIES, 显示占位符
+      act(() => { fireEvent.error(img) })
+      expect(document.querySelector('.poster-placeholder')).not.toBeNull()
     })
 
     it('无 posterPath 时应显示占位符', () => {

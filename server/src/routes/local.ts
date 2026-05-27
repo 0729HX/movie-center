@@ -62,6 +62,10 @@ async function preCacheAllLocalDetails(items: LocalMediaItem[]) {
       await Promise.allSettled(
         batch.map(async (item) => {
           try {
+            // NFO 数据已充分时跳过 TMDB 搜索
+            const hasNfoData = item.nfo_plot && item.nfo_genres && item.nfo_genres.length > 0 && item.nfo_ratings && item.nfo_ratings.length > 0;
+            if (hasNfoData) { done++; return; }
+
             let searchText = item.title;
             if (item.year) searchText += ` ${item.year}`;
             const { items: results } = await searchMedia(searchText, 1);
@@ -281,32 +285,38 @@ router.get('/detail/:id', async (req: TypedRequest<{ id: string }>, res: TypedRe
       }
     }
 
-    // NFO 本地数据（评分、流媒体信息、clearlogo）
+    // NFO 本地数据（评分、流媒体信息、clearlogo + 补充字段）
     const nfoRatings = local.nfo_ratings ? (typeof local.nfo_ratings === 'string' ? JSON.parse(local.nfo_ratings) : local.nfo_ratings) : [];
     const streamInfo = local.stream_info ? (typeof local.stream_info === 'string' ? JSON.parse(local.stream_info) : local.stream_info) : null;
     const clearlogoUrl = local.clearlogo_path ? `/api/local/file?path=${encodeURIComponent(local.clearlogo_path)}` : null;
+    const nfoGenres = local.nfo_genres ? (typeof local.nfo_genres === 'string' ? JSON.parse(local.nfo_genres) : local.nfo_genres) : [];
+    const nfoActors = local.nfo_actors ? (typeof local.nfo_actors === 'string' ? JSON.parse(local.nfo_actors) : local.nfo_actors) : [];
 
     if (!detail) {
+      // NFO 数据兜底：用 NFO 提取的字段填充详情
       return res.json({
         id: local.id,
         tmdbId: 0,
         title: local.title,
-        overview: '',
+        overview: local.nfo_plot || '',
         posterPath: local.poster_path ? `/api/local/file?path=${encodeURIComponent(local.poster_path)}` : null,
         backdropPath: local.backdrop_path ? `/api/local/file?path=${encodeURIComponent(local.backdrop_path)}` : null,
         year: String(local.year || ''),
         mediaType: local.media_type,
-        ratings: [],
-        genres: [],
-        runtime: 0,
+        ratings: nfoRatings,
+        genres: nfoGenres,
+        runtime: local.nfo_runtime || 0,
         status: '',
-        tagline: '',
+        tagline: local.nfo_tagline || '',
         isLocal: true,
         localPath: local.local_path,
         localId: local.id,
         nfoRatings,
         streamInfo,
         clearlogoPath: clearlogoUrl,
+        credits: nfoActors.map((a: any, i: number) => ({
+          id: i, name: a.name, character: a.character, profilePath: null, order: i,
+        })),
       });
     }
 

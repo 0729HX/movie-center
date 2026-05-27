@@ -60,3 +60,12 @@ INSERT IGNORE INTO config (`key`, `value`) VALUES
 ALTER TABLE local_media
   ADD COLUMN last_played_at DATETIME DEFAULT NULL COMMENT '最后播放时间',
   ADD COLUMN play_progress INT DEFAULT 0 COMMENT '播放进度(秒)';
+
+-- Feature: NFO 补充数据（减少 TMDB API 调用）
+ALTER TABLE local_media
+  ADD COLUMN imdb_id VARCHAR(20) DEFAULT NULL COMMENT 'IMDb ID (from NFO)',
+  ADD COLUMN nfo_plot TEXT DEFAULT NULL COMMENT '剧情简介 (from NFO)',
+  ADD COLUMN nfo_genres JSON DEFAULT NULL COMMENT '分类 (from NFO)',
+  ADD COLUMN nfo_runtime INT DEFAULT NULL COMMENT '时长分钟 (from NFO)',
+  ADD COLUMN nfo_tagline VARCHAR(500) DEFAULT NULL COMMENT '标语 (from NFO)',
+  ADD COLUMN nfo_actors JSON DEFAULT NULL COMMENT '演员列表 (from NFO)';

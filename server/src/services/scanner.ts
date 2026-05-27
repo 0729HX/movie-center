@@ -92,8 +92,14 @@ async function walkDir(
 
 interface NfoData {
   tmdbId: number | null;
+  imdbId: string | null;
   ratings: { source: string; displayName: string; score: number; maxScore: number; icon: string }[];
   streamInfo: { video?: { codec?: string; width?: number; height?: number; resolution?: string }; audio?: { codec?: string; channels?: number; language?: string }; subtitles?: string[] };
+  plot: string | null;
+  genres: string[];
+  runtime: number | null;
+  tagline: string | null;
+  actors: { name: string; character: string }[];
 }
 
 const RATING_MAP: Record<string, { displayName: string; maxScore: number; icon: string }> = {
@@ -115,7 +121,7 @@ async function parseNfoFile(
   files: Dirent[],
   fs: typeof import('fs/promises'),
 ): Promise<NfoData> {
-  const result: NfoData = { tmdbId: null, ratings: [], streamInfo: {} };
+  const result: NfoData = { tmdbId: null, imdbId: null, ratings: [], streamInfo: {}, plot: null, genres: [], runtime: null, tagline: null, actors: [] };
 
   // 查找 NFO 文件：movie.nfo / tvshow.nfo 优先，否则取第一个 .nfo
   let nfoPath: string | null = null;
@@ -139,6 +145,44 @@ async function parseNfoFile(
   let m = content.match(/<tmdbid>(\d+)<\/tmdbid>/i);
   if (!m) m = content.match(/<uniqueid\s+type=["']tmdb["'][^>]*>(\d+)<\/uniqueid>/i);
   if (m) result.tmdbId = parseInt(m[1]);
+
+  // IMDb ID
+  const imdbMatch = content.match(/<uniqueid\s+type=["']imdb["'][^>]*>(tt\d+)<\/uniqueid>/i);
+  if (imdbMatch) result.imdbId = imdbMatch[1];
+
+  // 剧情简介
+  const plotMatch = content.match(/<plot>([\s\S]*?)<\/plot>/i);
+  if (plotMatch) result.plot = plotMatch[1].trim();
+  if (!result.plot) {
+    const outlineMatch = content.match(/<outline>([\s\S]*?)<\/outline>/i);
+    if (outlineMatch) result.plot = outlineMatch[1].trim();
+  }
+
+  // 分类
+  const genreRe = /<genre>([^<]+)<\/genre>/gi;
+  let gm: RegExpExecArray | null;
+  while ((gm = genreRe.exec(content)) !== null) {
+    result.genres.push(gm[1].trim());
+  }
+
+  // 时长
+  const runtimeMatch = content.match(/<runtime>(\d+)<\/runtime>/i);
+  if (runtimeMatch) result.runtime = parseInt(runtimeMatch[1]);
+
+  // 标语
+  const taglineMatch = content.match(/<tagline>([\s\S]*?)<\/tagline>/i);
+  if (taglineMatch) result.tagline = taglineMatch[1].trim();
+
+  // 演员
+  const actorRe = /<actor>([\s\S]*?)<\/actor>/gi;
+  let am: RegExpExecArray | null;
+  while ((am = actorRe.exec(content)) !== null) {
+    const nameMatch = am[1].match(/<name>([^<]+)<\/name>/i);
+    const charMatch = am[1].match(/<character>([^<]+)<\/character>/i);
+    if (nameMatch) {
+      result.actors.push({ name: nameMatch[1].trim(), character: charMatch?.[1]?.trim() || '' });
+    }
+  }
 
   // 多源评分
   const ratingsBlock = content.match(/<ratings>([\s\S]*?)<\/ratings>/i);
@@ -237,7 +281,7 @@ async function processMediaDir(
 
   // === 去重：按 local_path 检查是否已存在 ===
   const existing: any[] = await query(
-    'SELECT id, tmdb_id, poster_path, backdrop_path, clearlogo_path, file_size, nfo_ratings, stream_info FROM local_media WHERE local_path = ?',
+    'SELECT id, tmdb_id, poster_path, backdrop_path, clearlogo_path, file_size, nfo_ratings, stream_info, imdb_id, nfo_plot, nfo_genres, nfo_runtime, nfo_tagline, nfo_actors FROM local_media WHERE local_path = ?',
     [videoPath],
   );
 
@@ -282,6 +326,8 @@ async function processMediaDir(
   // 序列化 JSON 字段
   const nfoRatingsJson = nfoData.ratings.length > 0 ? JSON.stringify(nfoData.ratings) : null;
   const streamInfoJson = Object.keys(nfoData.streamInfo).length > 0 ? JSON.stringify(nfoData.streamInfo) : null;
+  const genresJson = nfoData.genres.length > 0 ? JSON.stringify(nfoData.genres) : null;
+  const actorsJson = nfoData.actors.length > 0 ? JSON.stringify(nfoData.actors) : null;
 
   // === 从目录名提取标题和年份 ===
   const titleMatch = dirName.match(/^(.+?)\s*\(?(\d{4})\)?\s*$/);
@@ -307,7 +353,13 @@ async function processMediaDir(
       row.clearlogo_path === clearlogoPath &&
       row.file_size === stat.size &&
       row.nfo_ratings === nfoRatingsJson &&
-      row.stream_info === streamInfoJson;
+      row.stream_info === streamInfoJson &&
+      row.imdb_id === nfoData.imdbId &&
+      row.nfo_plot === nfoData.plot &&
+      row.nfo_genres === genresJson &&
+      row.nfo_runtime === nfoData.runtime &&
+      row.nfo_tagline === nfoData.tagline &&
+      row.nfo_actors === actorsJson;
 
     if (sameData) {
       return { status: 'skipped', tmdbId, mediaType };
@@ -315,18 +367,22 @@ async function processMediaDir(
 
     // 数据有变化 → 更新
     await query(
-      `UPDATE local_media SET tmdb_id=?, media_type=?, title=?, year=?, poster_path=?, backdrop_path=?, clearlogo_path=?, file_size=?, nfo_ratings=?, stream_info=?, updated_at=NOW()
+      `UPDATE local_media SET tmdb_id=?, media_type=?, title=?, year=?, poster_path=?, backdrop_path=?, clearlogo_path=?, file_size=?, nfo_ratings=?, stream_info=?,
+       imdb_id=?, nfo_plot=?, nfo_genres=?, nfo_runtime=?, nfo_tagline=?, nfo_actors=?, updated_at=NOW()
        WHERE id=?`,
-      [tmdbId, mediaType, title, year || null, posterPath || null, backdropPath || null, clearlogoPath || null, stat.size, nfoRatingsJson, streamInfoJson, row.id],
+      [tmdbId, mediaType, title, year || null, posterPath || null, backdropPath || null, clearlogoPath || null, stat.size, nfoRatingsJson, streamInfoJson,
+       nfoData.imdbId, nfoData.plot, genresJson, nfoData.runtime, nfoData.tagline, actorsJson, row.id],
     );
     return { status: 'updated', tmdbId, mediaType };
   }
 
   // === 新记录 → 插入 ===
   await query(
-    `INSERT INTO local_media (tmdb_id, media_type, title, year, local_path, poster_path, backdrop_path, clearlogo_path, file_size, nfo_ratings, stream_info)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [tmdbId, mediaType, title, year || null, videoPath, posterPath || null, backdropPath || null, clearlogoPath || null, stat.size, nfoRatingsJson, streamInfoJson],
+    `INSERT INTO local_media (tmdb_id, media_type, title, year, local_path, poster_path, backdrop_path, clearlogo_path, file_size, nfo_ratings, stream_info,
+     imdb_id, nfo_plot, nfo_genres, nfo_runtime, nfo_tagline, nfo_actors)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [tmdbId, mediaType, title, year || null, videoPath, posterPath || null, backdropPath || null, clearlogoPath || null, stat.size, nfoRatingsJson, streamInfoJson,
+     nfoData.imdbId, nfoData.plot, genresJson, nfoData.runtime, nfoData.tagline, actorsJson],
   );
   return { status: 'added', tmdbId, mediaType };
 }

@@ -132,7 +132,15 @@ export interface LocalMedia {
   file_size: number;
   nfo_ratings: NfoRating[] | null;
   stream_info: StreamInfo | null;
+  imdb_id: string | null;
+  nfo_plot: string | null;
+  nfo_genres: string[] | null;
+  nfo_runtime: number | null;
+  nfo_tagline: string | null;
+  nfo_actors: { name: string; character: string }[] | null;
   added_at: string;
+  last_played_at: string | null;
+  play_progress: number;
 }
 
 // === 演员阵容 ===

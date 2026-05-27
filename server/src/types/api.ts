@@ -94,7 +94,16 @@ export interface LocalMediaItem {
   local_path: string;
   poster_path: string | null;
   backdrop_path: string | null;
+  clearlogo_path: string | null;
   file_size: number;
+  nfo_ratings: any[] | null;
+  stream_info: any | null;
+  imdb_id: string | null;
+  nfo_plot: string | null;
+  nfo_genres: string[] | null;
+  nfo_runtime: number | null;
+  nfo_tagline: string | null;
+  nfo_actors: { name: string; character: string }[] | null;
   added_at: string;
   last_played_at: string | null;
   play_progress: number;

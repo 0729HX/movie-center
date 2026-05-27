@@ -28,6 +28,8 @@ const PosterCard: FC<Props> = ({ item, style, highlightQuery, isLocal, onToggleF
   const { handleSelect } = useDetail()
   const [imgError, setImgError] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
+  const [retries, setRetries] = useState(0)
+  const MAX_RETRIES = 2
 
   return (
     <div
@@ -53,11 +55,14 @@ const PosterCard: FC<Props> = ({ item, style, highlightQuery, isLocal, onToggleF
             {!imgLoaded && <div className="poster-img-skeleton" />}
             <img
               className={`poster-img${imgLoaded ? ' loaded' : ''}`}
-              src={item.posterPath}
+              src={`${item.posterPath}${retries > 0 ? '?retry=' + retries : ''}`}
               alt={item.title}
               loading="lazy"
               onLoad={() => setImgLoaded(true)}
-              onError={() => setImgError(true)}
+              onError={() => {
+                if (retries < MAX_RETRIES) setRetries(r => r + 1)
+                else setImgError(true)
+              }}
             />
           </>
         ) : (

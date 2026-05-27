@@ -107,6 +107,12 @@ export interface ApiLocalMedia {
   file_size: number
   nfo_ratings: ApiNfoRating[] | null
   stream_info: ApiStreamInfo | null
+  imdb_id: string | null
+  nfo_plot: string | null
+  nfo_genres: string[] | null
+  nfo_runtime: number | null
+  nfo_tagline: string | null
+  nfo_actors: { name: string; character: string }[] | null
   added_at: string
   last_played_at: string | null
   play_progress: number
