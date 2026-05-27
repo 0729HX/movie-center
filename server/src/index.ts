@@ -12,6 +12,11 @@ import detailRouter from './routes/detail';
 import localRouter from './routes/local';
 import configRouter from './routes/config';
 import watcherRouter from './routes/watcher';
+import metadataRouter from './routes/metadata';
+import subtitlesRouter from './routes/subtitles';
+import organizeRouter from './routes/organize';
+import tracksRouter from './routes/tracks';
+import { checkFfmpegHealth } from './services/track-manager';
 
 const app = express();
 const PORT = 3001;
@@ -29,6 +34,10 @@ app.use('/api/detail', detailRouter);
 app.use('/api/local', localRouter);
 app.use('/api/config', configRouter);
 app.use('/api/watcher', watcherRouter);
+app.use('/api/metadata', metadataRouter);
+app.use('/api/subtitles', subtitlesRouter);
+app.use('/api/organize', organizeRouter);
+app.use('/api/tracks', tracksRouter);
 
 // 本地海报文件服务（处理 Windows 绝对路径如 H:\movies\...）
 // 使用查询参数方式避免 URL 路径中的冒号问题
@@ -80,4 +89,13 @@ app.use(errorHandler);
 app.listen(PORT, () => {
   console.log(`✓ Movie Center Server running at http://localhost:${PORT}`);
   console.log(`  API: http://localhost:${PORT}/api`);
+
+  // Check ffmpeg availability at startup (non-blocking)
+  checkFfmpegHealth().then((health) => {
+    if (health.available) {
+      console.log(`  ffmpeg: ${health.version}`);
+    } else {
+      console.warn(`  ffmpeg: not available (${health.error || 'not found'})`);
+    }
+  });
 });

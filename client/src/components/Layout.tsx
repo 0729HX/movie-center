@@ -27,11 +27,14 @@ export default function Layout() {
   return (
     <>
       <Navbar onSearch={handleSearch} onPageChange={handlePageChange} />
-      <main className="main-content">
+      <main className="pt-[var(--nav-height)]">
         {state.error && (
-          <div className="error-banner">
-            <span className="error-banner-text">⚠ {state.error}</span>
-            <button className="error-banner-btn" onClick={() => loadAll(true)}>
+          <div className="flex items-center justify-between gap-3 mx-[var(--content-padding)] my-4 px-5 py-3.5 rounded-xl bg-[rgba(255,59,48,0.12)] border border-[rgba(255,59,48,0.3)]">
+            <span className="text-sm font-medium text-[#ff453a]">⚠ {state.error}</span>
+            <button
+              className="px-4 py-1.5 rounded-lg text-[13px] font-semibold cursor-pointer whitespace-nowrap border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.08)] text-[#f5f5f7] transition-all duration-200 hover:bg-[rgba(255,255,255,0.15)] hover:border-[rgba(255,255,255,0.2)]"
+              onClick={() => loadAll(true)}
+            >
               重试
             </button>
           </div>

@@ -25,18 +25,21 @@ const MovieRow: FC<Props> = ({ title, items, loading }) => {
   }, [items])
 
   return (
-    <div className="category-section">
-      <h2 className="section-title">{title}</h2>
+    <div className="mb-[var(--section-gap)]">
+      <h2 className="font-[family-name:var(--font-display)] text-[28px] font-extrabold tracking-[-0.03em] text-[var(--text-primary)] mb-5 px-[var(--content-padding)] max-md:text-[22px]">{title}</h2>
 
       {loading ? (
         <SkeletonRow count={8} />
       ) : (
         <div style={{ position: 'relative' }}>
-          <div className="scroll-row" ref={scrollRef}>
+          <div
+            className="flex gap-4 overflow-x-auto scroll-snap-x snap-start px-[var(--content-padding)] pb-3 scroll-smooth [&>*]:shrink-0 [&>*]:snap-start scroll-row"
+            ref={scrollRef}
+          >
             {items.map((item, index) => (
               <div
                 key={`${item.mediaType}-${item.tmdbId}`}
-                className="stagger-item"
+                className="animate-[fadeInUp_0.4s_var(--ease-out-expo)_both] [animation-delay:calc(var(--stagger-index,0)*0.06s)]"
                 style={{ '--stagger-index': Math.min(index, 10) } as React.CSSProperties}
               >
                 <PosterCard item={item} />
@@ -45,7 +48,9 @@ const MovieRow: FC<Props> = ({ title, items, loading }) => {
           </div>
 
           {/* 右侧渐变遮罩（提示可滚动） */}
-          {canScrollRight && <div className="scroll-row-fade" />}
+          {canScrollRight && (
+            <div className="absolute top-0 right-0 bottom-2 w-20 bg-gradient-to-l from-transparent to-[var(--bg-primary)] pointer-events-none z-[1]" />
+          )}
         </div>
       )}
     </div>
