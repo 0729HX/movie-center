@@ -67,6 +67,21 @@ DataContext (useReducer) > AppContext (fetch) > DetailContext (actions)
 
 TMDB (实时) + OMDb (DB 缓存, 提供 IMDb/RT/Metacritic)
 
+## Claude Code 钩子 (Hooks)
+
+| 钩子 | 触发时机 | 脚本 | 说明 |
+|------|---------|------|------|
+| **Stop** | 对话结束时 | `~/.claude/scripts/auto-push.ps1` | 自动提交并推送代码 |
+
+### Stop 钩子工作流程
+
+1. 从 stdin 接收当前工作目录
+2. 检查是否为 git 仓库，是否有远程仓库
+3. 扫描变更文件中的 `TODO`/`FIXME`/`HACK`/`XXX` 注释，追加到 `.claude/TODO.md`
+4. 执行 `git add -A` → `git commit -m "auto: conversation end sync"` → `git push`
+5. 若无上游分支，自动 `git push -u origin <branch>`
+6. 静默失败，不干扰用户
+
 ## 注意事项
 
 - mysql2 DECIMAL 列返回字符串，需 `Number()` 转换
