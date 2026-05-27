@@ -83,6 +83,7 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
   const [posterError, setPosterError] = useState(false)
   const [playResult, setPlayResult] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false)
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') handleCloseDetail() }
@@ -107,7 +108,14 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
   }
 
   const handleSave = () => { setBusy(true); handleSaveLocal(media); setTimeout(() => setBusy(false), 800) }
-  const handleRemove = () => { setBusy(true); handleRemoveLocal(media); setTimeout(() => setBusy(false), 800) }
+  const handleRemove = () => { setShowRemoveConfirm(true) }
+
+  const confirmRemove = (deleteFiles: boolean) => {
+    setShowRemoveConfirm(false)
+    setBusy(true)
+    handleRemoveLocal(media, deleteFiles)
+    setTimeout(() => setBusy(false), 800)
+  }
 
   const hasBackdrop = media.backdropPath && !backdropError
   const hasPoster = media.posterPath && !posterError
@@ -295,6 +303,23 @@ const DetailModal: FC<Props> = ({ media, loading }) => {
           </div>
         )}
       </div>
+
+      {/* 删除确认弹窗 */}
+      {showRemoveConfirm && (
+        <div className="batch-confirm-backdrop" onClick={() => setShowRemoveConfirm(false)}>
+          <div className="batch-confirm-dialog" onClick={e => e.stopPropagation()}>
+            <div className="batch-confirm-title">确认删除</div>
+            <div className="batch-confirm-msg">
+              确定要从列表中移除「{media.title}」吗？请选择操作：
+            </div>
+            <div className="batch-confirm-actions">
+              <button className="genre-pill" onClick={() => setShowRemoveConfirm(false)}>取消</button>
+              <button className="batch-toolbar-delete" onClick={() => confirmRemove(false)}>仅从列表移除</button>
+              <button className="batch-toolbar-delete" onClick={() => confirmRemove(true)}>删除文件和记录</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

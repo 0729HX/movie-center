@@ -38,6 +38,8 @@ function makeLocalMedia(overrides: Partial<LocalMedia> = {}): LocalMedia {
     nfo_ratings: null,
     stream_info: null,
     added_at: '2024-01-01T00:00:00Z',
+    last_played_at: null,
+    play_progress: 0,
     ...overrides,
   }
 }

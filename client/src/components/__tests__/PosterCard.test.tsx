@@ -5,14 +5,10 @@ import type { MediaWithRatings } from '../../types'
 // ======================== Mock 依赖 ========================
 
 const mockHandleSelect = vi.fn()
-const mockHandleSaveLocal = vi.fn()
-const mockHandleRemoveLocal = vi.fn()
 
 vi.mock('../../context/hooks', () => ({
   useDetail: () => ({
     handleSelect: mockHandleSelect,
-    handleSaveLocal: mockHandleSaveLocal,
-    handleRemoveLocal: mockHandleRemoveLocal,
   }),
 }))
 
@@ -138,53 +134,50 @@ describe('PosterCard', () => {
       expect(mockHandleSelect).toHaveBeenCalledWith(item)
     })
 
-    it('点击收藏按钮应调用 handleSaveLocal', () => {
-      render(<PosterCard item={makeItem({ isLocal: false })} />)
-      const btn = document.querySelector('.poster-card-save-btn')!
+    it('点击收藏按钮应调用 onToggleFavorite', () => {
+      const onToggle = vi.fn()
+      render(<PosterCard item={makeItem()} isLocal={false} onToggleFavorite={onToggle} />)
+      const btn = document.querySelector('.poster-card-fav-btn')!
       fireEvent.click(btn)
-      expect(mockHandleSaveLocal).toHaveBeenCalled()
-    })
-
-    it('已收藏时点击应调用 handleRemoveLocal', () => {
-      render(<PosterCard item={makeItem({ isLocal: true })} />)
-      const btn = document.querySelector('.poster-card-save-btn')!
-      fireEvent.click(btn)
-      expect(mockHandleRemoveLocal).toHaveBeenCalled()
+      expect(onToggle).toHaveBeenCalled()
     })
 
     it('收藏按钮点击不应触发卡片点击', () => {
-      render(<PosterCard item={makeItem()} />)
-      const btn = document.querySelector('.poster-card-save-btn')!
+      const onToggle = vi.fn()
+      render(<PosterCard item={makeItem()} onToggleFavorite={onToggle} />)
+      const btn = document.querySelector('.poster-card-fav-btn')!
       fireEvent.click(btn)
-      // handleSelect 不应被调用（stopPropagation）
       expect(mockHandleSelect).not.toHaveBeenCalled()
     })
   })
 
   // ---------- 本地标记 ----------
   describe('本地标记', () => {
-    it('isLocal=true 时收藏按钮应有 saved 类名', () => {
-      render(<PosterCard item={makeItem({ isLocal: true })} />)
-      const btn = document.querySelector('.poster-card-save-btn')!
-      expect(btn.classList.contains('saved')).toBe(true)
+    it('isLocal prop=true 时应显示收藏角标', () => {
+      render(<PosterCard item={makeItem()} isLocal />)
+      expect(document.querySelector('.poster-card-fav-badge')).not.toBeNull()
     })
 
-    it('isLocal=false 时收藏按钮不应有 saved 类名', () => {
-      render(<PosterCard item={makeItem({ isLocal: false })} />)
-      const btn = document.querySelector('.poster-card-save-btn')!
-      expect(btn.classList.contains('saved')).toBe(false)
+    it('isLocal prop=false 时不应显示收藏角标', () => {
+      render(<PosterCard item={makeItem()} isLocal={false} />)
+      expect(document.querySelector('.poster-card-fav-badge')).toBeNull()
     })
 
-    it('已收藏时 SVG 应使用 fill', () => {
-      render(<PosterCard item={makeItem({ isLocal: true })} />)
-      const svg = document.querySelector('.poster-card-save-btn svg')!
-      expect(svg.getAttribute('fill')).toBe('currentColor')
+    it('有 onToggleFavorite 时 isLocal=true 应有 favorited 类名', () => {
+      render(<PosterCard item={makeItem()} isLocal onToggleFavorite={vi.fn()} />)
+      const btn = document.querySelector('.poster-card-fav-btn')!
+      expect(btn.classList.contains('favorited')).toBe(true)
     })
 
-    it('未收藏时 SVG 应使用 none fill', () => {
-      render(<PosterCard item={makeItem({ isLocal: false })} />)
-      const svg = document.querySelector('.poster-card-save-btn svg')!
-      expect(svg.getAttribute('fill')).toBe('none')
+    it('有 onToggleFavorite 时 isLocal=false 不应有 favorited 类名', () => {
+      render(<PosterCard item={makeItem()} isLocal={false} onToggleFavorite={vi.fn()} />)
+      const btn = document.querySelector('.poster-card-fav-btn')!
+      expect(btn.classList.contains('favorited')).toBe(false)
+    })
+
+    it('无 onToggleFavorite 时不应渲染收藏按钮', () => {
+      render(<PosterCard item={makeItem()} isLocal />)
+      expect(document.querySelector('.poster-card-fav-btn')).toBeNull()
     })
   })
 

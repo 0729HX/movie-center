@@ -209,7 +209,7 @@ describe('API Client', () => {
       mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }))
       await api.local.delete(42)
       expect(mockFetch).toHaveBeenCalledWith(
-        '/api/local/42',
+        '/api/local/42?deleteFiles=true',
         expect.objectContaining({ method: 'DELETE' }),
       )
     })

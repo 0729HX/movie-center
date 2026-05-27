@@ -108,6 +108,8 @@ export interface ApiLocalMedia {
   nfo_ratings: ApiNfoRating[] | null
   stream_info: ApiStreamInfo | null
   added_at: string
+  last_played_at: string | null
+  play_progress: number
 }
 
 // ─── App config (server returns snake_case) ─────────────────────────

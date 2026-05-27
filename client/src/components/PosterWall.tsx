@@ -18,6 +18,8 @@ interface Props {
   emptyTitle?: string
   emptyDesc?: string
   resultCount?: number
+  localIds?: Set<number>
+  onToggleFavorite?: (item: MediaWithRatings) => void
 }
 
 const PosterWall: FC<Props> = ({
@@ -25,6 +27,7 @@ const PosterWall: FC<Props> = ({
   hasMore, onLoadMore, loadingMore,
   genres, activeGenre, onGenreChange, onClear,
   highlightQuery, emptyTitle, emptyDesc, resultCount,
+  localIds, onToggleFavorite,
 }) => {
   const sentinelRef = useRef<HTMLDivElement>(null)
 
@@ -113,7 +116,12 @@ const PosterWall: FC<Props> = ({
                 className="stagger-item"
                 style={{ '--stagger-index': Math.min(index, 10) } as React.CSSProperties}
               >
-                <PosterCard item={item} highlightQuery={highlightQuery} />
+                <PosterCard
+                  item={item}
+                  highlightQuery={highlightQuery}
+                  isLocal={localIds?.has(item.tmdbId)}
+                  onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(item) : undefined}
+                />
               </div>
             ))}
           </div>
@@ -152,4 +160,6 @@ export default memo(PosterWall, (prev, next) =>
   && prev.onLoadMore === next.onLoadMore
   && prev.onGenreChange === next.onGenreChange
   && prev.onClear === next.onClear
+  && prev.localIds === next.localIds
+  && prev.onToggleFavorite === next.onToggleFavorite
 )

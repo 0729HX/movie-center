@@ -54,3 +54,9 @@ INSERT IGNORE INTO config (`key`, `value`) VALUES
   ('media_root', ''),
   ('tmdb_api_key', '95777cd0ce9652f08bd77103f658cf2b'),
   ('omdb_api_key', '');
+
+-- ======================== 增量变更 ========================
+-- Feature 4: 继续观看（播放进度记录）
+ALTER TABLE local_media
+  ADD COLUMN last_played_at DATETIME DEFAULT NULL COMMENT '最后播放时间',
+  ADD COLUMN play_progress INT DEFAULT 0 COMMENT '播放进度(秒)';

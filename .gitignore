@@ -34,5 +34,14 @@ temp/
 # 测试
 coverage/
 
+# 测试截图
+test-*.png
+test-*.jpg
+test-*.jpeg
+client/modal-test.png
+
+# CodeGraph 索引
+.codegraph/
+
 # 敏感配置（含密钥的本地配置）
 config.local.*

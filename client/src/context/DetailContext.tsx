@@ -7,7 +7,8 @@ import { api } from '../api/client'
 interface DetailContextValue {
   handleSelect: (item: MediaWithRatings) => Promise<void>
   handleSaveLocal: (item: MediaWithRatings) => Promise<void>
-  handleRemoveLocal: (item: MediaWithRatings) => Promise<void>
+  handleRemoveLocal: (item: MediaWithRatings, deleteFiles?: boolean) => Promise<void>
+  handleToggleFavorite: (item: MediaWithRatings) => Promise<void>
   handleSelectRecommendation: (rec: Recommendation) => void
   handleCloseDetail: () => void
 }
@@ -54,7 +55,7 @@ export function DetailContextProvider({ children }: { children: ReactNode }) {
     fetchLocal()
   }, [dispatch, fetchLocal])
 
-  const handleRemoveLocal = useCallback(async (item: MediaWithRatings) => {
+  const handleRemoveLocal = useCallback(async (item: MediaWithRatings, deleteFiles = true) => {
     const id = item.localId || item.id
     if (!id) return
     // 乐观更新
@@ -62,7 +63,7 @@ export function DetailContextProvider({ children }: { children: ReactNode }) {
       type: 'UPDATE_SELECTED_MEDIA',
       payload: { isLocal: false, localId: undefined, localPath: undefined },
     })
-    await api.local.delete(id)
+    await api.local.delete(id, deleteFiles)
     fetchLocal()
   }, [dispatch, fetchLocal])
 
@@ -90,9 +91,18 @@ export function DetailContextProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_DETAIL_LOADING', payload: false })
   }, [dispatch])
 
+  const handleToggleFavorite = useCallback(async (item: MediaWithRatings) => {
+    if (item.isLocal) {
+      await handleRemoveLocal(item, false)
+    } else {
+      await handleSaveLocal(item)
+    }
+  }, [handleSaveLocal, handleRemoveLocal])
+
   return (
     <DetailContext.Provider value={{
       handleSelect, handleSaveLocal, handleRemoveLocal,
+      handleToggleFavorite,
       handleSelectRecommendation, handleCloseDetail,
     }}>
       {children}

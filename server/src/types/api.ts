@@ -96,6 +96,8 @@ export interface LocalMediaItem {
   backdrop_path: string | null;
   file_size: number;
   added_at: string;
+  last_played_at: string | null;
+  play_progress: number;
 }
 
 // ======================== 健康检查 ========================

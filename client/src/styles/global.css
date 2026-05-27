@@ -1464,6 +1464,75 @@ button {
   border-color: rgba(255,45,85,0.3);
   background: rgba(0,0,0,0.55);
 }
+
+/* --- 收藏角标（始终可见） --- */
+.poster-card-fav-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255,45,85,0.3);
+  pointer-events: none;
+}
+
+/* --- hover 叠加层收藏按钮 --- */
+.poster-card-fav-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.12);
+  cursor: pointer;
+  transition: all 0.3s var(--ease-spring);
+  z-index: 3;
+  pointer-events: auto;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.poster-card-fav-btn:hover {
+  background: rgba(255,45,85,0.2);
+  border-color: rgba(255,45,85,0.4);
+  transform: scale(1.1);
+}
+.poster-card-fav-btn.favorited {
+  color: #ff2d55;
+  border-color: rgba(255,45,85,0.3);
+  background: rgba(0,0,0,0.55);
+}
+
+.poster-card-local-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(52, 199, 89, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 2;
+  pointer-events: none;
+  line-height: 1.4;
+}
 .poster-placeholder-icon {
   font-size: 32px;
   opacity: 0.3;
@@ -2761,6 +2830,200 @@ button {
 }
 .rating-badge-score-lg {
   font-size: 11px;
+}
+
+/* --- ======== 继续观看 ======== --- */
+.recently-watched-section {
+  margin-bottom: var(--section-gap);
+}
+.recently-watched-row {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 0 var(--content-padding);
+  padding-bottom: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.recently-watched-row::-webkit-scrollbar {
+  height: 4px;
+}
+.recently-watched-row::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 2px;
+}
+.recently-watched-card {
+  flex-shrink: 0;
+  width: 160px;
+  cursor: pointer;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-card);
+  transition: transform 0.3s var(--ease-out-expo), box-shadow 0.3s var(--ease-out-expo);
+  scroll-snap-align: start;
+}
+.recently-watched-card:hover {
+  transform: translateY(-6px) scale(1.02);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06);
+}
+.recently-watched-card-poster-wrap {
+  position: relative;
+  overflow: hidden;
+}
+.recently-watched-card-poster {
+  width: 160px;
+  height: 240px;
+  object-fit: cover;
+  display: block;
+  background: var(--bg-secondary);
+}
+.recently-watched-card-poster-placeholder {
+  width: 160px;
+  height: 240px;
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-card) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: 28px;
+}
+.recently-watched-card-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255,255,255,0.15);
+}
+.recently-watched-card-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+  transition: width 0.4s ease;
+}
+.recently-watched-card-title {
+  padding: 8px 10px 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recently-watched-card-year {
+  padding: 0 10px 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* --- ======== 剧集分组卡片 ======== --- */
+.series-card {
+  cursor: pointer;
+}
+
+.series-card .poster-card-img-wrap {
+  cursor: pointer;
+}
+
+.series-expand-indicator {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px) saturate(1.8);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: background 0.2s ease;
+}
+
+.series-card:hover .series-expand-indicator {
+  background: rgba(0, 113, 227, 0.7);
+}
+
+/* 剧集列表（展开态） */
+.series-episode-list {
+  padding: 8px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 320px;
+  overflow-y: auto;
+  animation: fadeInUp 0.25s ease-out;
+}
+
+.series-episode-list::-webkit-scrollbar {
+  width: 4px;
+}
+.series-episode-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+}
+
+/* 每集一行 */
+.series-episode-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.series-episode-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.series-episode-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.series-episode-size {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.series-episode-play-btn,
+.series-episode-delete-btn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+}
+
+.series-episode-play-btn {
+  color: var(--accent);
+}
+
+.series-episode-play-btn:hover {
+  background: rgba(41, 151, 255, 0.15);
+}
+
+.series-episode-delete-btn {
+  color: #ff453a;
+  opacity: 0.5;
+}
+
+.series-episode-delete-btn:hover {
+  opacity: 1;
+  background: rgba(255, 69, 58, 0.12);
 }
 
 /* --- ======== 无障碍: 减少动画 ======== --- */

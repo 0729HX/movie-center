@@ -160,8 +160,8 @@ export const api = {
       return request('/local/save', { method: 'POST', body: data, signal })
     },
 
-    delete(id: number, signal?: AbortSignal): Promise<unknown> {
-      return request(`/local/${id}`, { method: 'DELETE', signal })
+    delete(id: number, deleteFiles = true, signal?: AbortSignal): Promise<unknown> {
+      return request(`/local/${id}?deleteFiles=${deleteFiles}`, { method: 'DELETE', signal })
     },
 
     scan(path: string, signal?: AbortSignal): Promise<ApiScanResult> {
@@ -170,6 +170,14 @@ export const api = {
 
     play(id: number, signal?: AbortSignal): Promise<ApiPlayResult> {
       return request(`/local/play/${id}`, { method: 'POST', signal })
+    },
+
+    recentlyWatched(signal?: AbortSignal): Promise<ApiLocalListResponse> {
+      return request('/local/recently-watched', { signal })
+    },
+
+    reportProgress(id: number, seconds: number, signal?: AbortSignal): Promise<unknown> {
+      return request('/local/progress', { method: 'POST', body: { id, seconds }, signal })
     },
 
     batchDelete(ids: number[]): Promise<unknown[]> {

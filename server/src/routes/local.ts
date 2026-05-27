@@ -196,10 +196,11 @@ router.post('/save', async (req: TypedRequest<Record<string, string>, { tmdb_id:
   }
 });
 
-// 从本地删除（同时删除影视文件夹）
+// 从本地删除 — ?deleteFiles=true 时同时删除磁盘文件夹，否则仅移除记录
 router.delete('/:id', async (req: TypedRequest<{ id: string }>, res: TypedResponse<{ success: boolean }>) => {
   try {
     const id = parseInt(req.params.id);
+    const deleteFiles = req.query.deleteFiles === 'true';
     const rows: any[] = await query(
       'SELECT tmdb_id, media_type, local_path, poster_path, backdrop_path FROM local_media WHERE id = ?',
       [id]
@@ -209,8 +210,8 @@ router.delete('/:id', async (req: TypedRequest<{ id: string }>, res: TypedRespon
     const row = rows[0];
     const ok = await removeFromLocal(id);
 
-    // 删除影视文件夹（视频文件所在目录的父目录，如 "决战中途岛 (2019)"）
-    if (ok && row.local_path) {
+    // 删除影视文件夹（仅 deleteFiles=true 时执行）
+    if (ok && deleteFiles && row.local_path) {
       try {
         const path = await import('path');
         const videoDir = path.dirname(row.local_path);
@@ -332,7 +333,7 @@ router.get('/detail/:id', async (req: TypedRequest<{ id: string }>, res: TypedRe
   }
 });
 
-// 播放本地媒体
+// 播放本地媒体（同时更新 last_played_at）
 router.post('/play/:id', async (req: TypedRequest<{ id: string }>, res: TypedResponse<Record<string, unknown>>) => {
   try {
     const id = parseInt(req.params.id);
@@ -342,6 +343,9 @@ router.post('/play/:id', async (req: TypedRequest<{ id: string }>, res: TypedRes
       throw notFound('未找到该媒体');
     }
 
+    // 更新最后播放时间
+    await query('UPDATE local_media SET last_played_at = NOW() WHERE id = ?', [id]);
+
     const result = await playWithPotPlayer(rows[0].local_path);
     res.json(result);
   } catch (err: unknown) {
@@ -349,6 +353,59 @@ router.post('/play/:id', async (req: TypedRequest<{ id: string }>, res: TypedRes
     const message = err instanceof Error ? err.message : '未知错误';
     console.error('Play error:', message);
     throw internalError(`播放失败: ${message}`);
+  }
+});
+
+// 上报播放进度
+router.post('/progress', async (req: TypedRequest<Record<string, unknown>, { id: number; seconds: number }>, res: TypedResponse<{ success: boolean }>) => {
+  try {
+    const { id, seconds } = req.body;
+    if (!id || typeof seconds !== 'number') {
+      throw badRequest('缺少必要参数 id 或 seconds');
+    }
+    await query('UPDATE local_media SET play_progress = ? WHERE id = ?', [Math.max(0, Math.floor(seconds)), id]);
+    res.json({ success: true });
+  } catch (err: unknown) {
+    if (err instanceof Error && 'statusCode' in err) throw err;
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('Progress error:', message);
+    throw internalError('更新进度失败');
+  }
+});
+
+// 最近观看（继续观看）
+router.get('/recently-watched', async (_req, res: TypedResponse<{ items: LocalMediaItem[] }>) => {
+  try {
+    const rawItems: any[] = await query(
+      'SELECT * FROM local_media WHERE last_played_at IS NOT NULL ORDER BY last_played_at DESC LIMIT 10'
+    );
+
+    const items = rawItems.map((item: any) => ({
+      ...item,
+      nfo_ratings: item.nfo_ratings ? (typeof item.nfo_ratings === 'string' ? JSON.parse(item.nfo_ratings) : item.nfo_ratings) : null,
+      stream_info: item.stream_info ? (typeof item.stream_info === 'string' ? JSON.parse(item.stream_info) : item.stream_info) : null,
+      clearlogo_path: item.clearlogo_path || null,
+    }));
+
+    // 海报回退
+    const needPoster = items.filter((i) => !i.poster_path && i.tmdb_id && i.tmdb_id > 0);
+    if (needPoster.length > 0) {
+      await Promise.allSettled(needPoster.map(async (item) => {
+        try {
+          const cacheKey = `detail:${item.media_type}:${item.tmdb_id}`;
+          const cached: any = await cacheGet(cacheKey);
+          if (cached?.posterPath) {
+            item.poster_path = cached.posterPath;
+          }
+        } catch { /* skip */ }
+      }));
+    }
+
+    res.json({ items });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('Recently watched error:', message);
+    throw internalError('获取最近观看失败');
   }
 });
 

@@ -1,7 +1,18 @@
 import { type FC, useState, useEffect, useMemo, useCallback } from 'react'
 import type { LocalMedia, MediaWithRatings } from '../types'
 import { useApp, useDetail } from '../context/hooks'
+import { api } from '../api/client'
 import { SkeletonWall } from './Skeleton'
+
+/** 剧集按标题分组的数据结构 */
+interface SeriesGroup {
+  type: 'series'
+  title: string
+  year: string
+  posterPath: string | null
+  episodes: LocalMedia[]
+  totalSize: number
+}
 
 interface Props {
   items: LocalMedia[]
@@ -42,7 +53,10 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
   const [batchDeleting, setBatchDeleting] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
 
-  // 筛选 + 排序（单次 useMemo）
+  // 单个删除确认
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; title: string } | null>(null)
+
+  // 筛选 + 排序 + 剧集分组（单次 useMemo）
   const displayItems = useMemo(() => {
     let result = items
     // 类型筛选
@@ -60,7 +74,65 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
       return (aVal as number) - (bVal as number)
     })
     if (sortDir === 'desc') result.reverse()
-    return result
+
+    // 剧集按标题分组，电影保持不变
+    const movies = result.filter(i => i.media_type === 'movie')
+    const tvItems = result.filter(i => i.media_type === 'tv')
+
+    // 按标题聚合剧集
+    const seriesMap = new Map<string, LocalMedia[]>()
+    for (const ep of tvItems) {
+      const key = ep.title
+      if (!seriesMap.has(key)) seriesMap.set(key, [])
+      seriesMap.get(key)!.push(ep)
+    }
+
+    const seriesGroups: SeriesGroup[] = []
+    for (const [title, episodes] of seriesMap) {
+      // 各集按文件名排序
+      episodes.sort((a, b) => {
+        const aName = a.local_path?.split(/[/\\]/).pop() || ''
+        const bName = b.local_path?.split(/[/\\]/).pop() || ''
+        return aName.localeCompare(bName)
+      })
+      seriesGroups.push({
+        type: 'series',
+        title,
+        year: String(episodes[0].year || ''),
+        posterPath: episodes[0].poster_path,
+        episodes,
+        totalSize: episodes.reduce((sum, e) => sum + e.file_size, 0),
+      })
+    }
+
+    // 合并电影和剧集组，按各自排序位置保持顺序
+    // 使用添加时间排序时保持原始顺序
+    const itemsWithIndex = result.map((item, i) => ({ item, originalIndex: i }))
+    const movieItems = itemsWithIndex.filter(x => x.item.media_type === 'movie')
+    const tvGroupItems = itemsWithIndex.filter(x => x.item.media_type === 'tv')
+
+    // 按原始顺序构建分组列表
+    const merged: (LocalMedia | SeriesGroup)[] = []
+    const seriesAdded = new Set<string>()
+    const tvItemToSeries = new Map<number, string>()
+    for (const { item } of tvGroupItems) {
+      tvItemToSeries.set(item.id, item.title)
+    }
+
+    for (const { item, originalIndex } of itemsWithIndex) {
+      if (item.media_type === 'movie') {
+        merged.push(item)
+      } else {
+        const seriesTitle = item.title
+        if (!seriesAdded.has(seriesTitle)) {
+          seriesAdded.add(seriesTitle)
+          const group = seriesGroups.find(g => g.title === seriesTitle)
+          if (group) merged.push(group)
+        }
+      }
+    }
+
+    return merged
   }, [items, typeFilter, textFilter, sortField, sortDir])
 
   const movieCount = items.filter(i => i.media_type === 'movie').length
@@ -97,12 +169,25 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
     }
   }
 
-  const handleDelete = async (id: number, e: React.MouseEvent) => {
+  const handleDelete = (id: number, e: React.MouseEvent) => {
     e.stopPropagation()
+    const item = items.find(i => i.id === id)
+    setDeleteTarget({ id, title: item?.title || `#${id}` })
+  }
+
+  const confirmDelete = async (deleteFiles: boolean) => {
+    if (!deleteTarget) return
+    const { id } = deleteTarget
+    setDeleteTarget(null)
     setDeleting(id)
-    await fetch(`/api/local/${id}`, { method: 'DELETE' })
-    setDeleting(null)
-    fetchLocal()
+    try {
+      await api.local.delete(id, deleteFiles)
+      fetchLocal()
+    } catch {
+      fetchLocal()
+    } finally {
+      setDeleting(null)
+    }
   }
 
   const handlePlay = async (id: number, e: React.MouseEvent) => {
@@ -158,11 +243,20 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
     if (selectedIds.size === displayItems.length) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(displayItems.map(i => i.id)))
+      // 从 LocalMedia 和 SeriesGroup 中提取所有 id
+      const allIds: number[] = []
+      for (const item of displayItems) {
+        if ('type' in item && item.type === 'series') {
+          for (const ep of item.episodes) allIds.push(ep.id)
+        } else {
+          allIds.push((item as LocalMedia).id)
+        }
+      }
+      setSelectedIds(new Set(allIds))
     }
   }
 
-  const handleBatchDelete = async () => {
+  const handleBatchDelete = async (deleteFiles: boolean) => {
     setBatchDeleting(true)
     setShowConfirm(false)
     // 乐观 UI：先从本地 state 移除
@@ -171,7 +265,7 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
     setBatchMode(false)
     try {
       await Promise.all(idsToDelete.map(id =>
-        fetch(`/api/local/${id}`, { method: 'DELETE' })
+        api.local.delete(id, deleteFiles)
       ))
       fetchLocal()
     } catch {
@@ -319,23 +413,37 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
       ) : (
         <div className="poster-grid">
           {displayItems.map((item, index) => {
-            const posterUrl = item.poster_path
-              ? (item.poster_path!.startsWith('http')
-                ? item.poster_path!
-                : `/api/local/file?path=${encodeURIComponent(item.poster_path!)}`)
+            if ('type' in item && item.type === 'series') {
+              return (
+                <SeriesCard
+                  key={`series-${item.title}`}
+                  group={item}
+                  index={index}
+                  batchMode={batchMode}
+                  onDelete={handleDelete}
+                  onPlay={handlePlay}
+                />
+              )
+            }
+            // LocalMedia (movie 或单独的剧集)
+            const media = item as LocalMedia
+            const posterUrl = media.poster_path
+              ? (media.poster_path!.startsWith('http')
+                ? media.poster_path!
+                : `/api/local/file?path=${encodeURIComponent(media.poster_path!)}`)
               : null
             return (
               <LocalCard
-                key={item.id}
-                item={item}
+                key={media.id}
+                item={media}
                 posterUrl={posterUrl}
                 index={index}
-                deleting={deleting === item.id}
+                deleting={deleting === media.id}
                 batchMode={batchMode}
-                selected={selectedIds.has(item.id)}
-                onSelect={() => handleItemClick(item)}
-                onDelete={(e) => handleDelete(item.id, e)}
-                onPlay={(e) => handlePlay(item.id, e)}
+                selected={selectedIds.has(media.id)}
+                onSelect={() => handleItemClick(media)}
+                onDelete={(e) => handleDelete(media.id, e)}
+                onPlay={(e) => handlePlay(media.id, e)}
               />
             )
           })}
@@ -362,13 +470,159 @@ const LocalMediaView: FC<Props> = ({ items, loading }) => {
           <div className="batch-confirm-dialog" onClick={e => e.stopPropagation()}>
             <div className="batch-confirm-title">确认删除</div>
             <div className="batch-confirm-msg">
-              确定要删除已选的 {selectedIds.size} 项本地影视吗？对应的影视文件夹也将被删除，此操作不可撤销。
+              已选 {selectedIds.size} 项本地影视。请选择操作：
             </div>
             <div className="batch-confirm-actions">
               <button className="genre-pill" onClick={() => setShowConfirm(false)}>取消</button>
-              <button className="batch-toolbar-delete" onClick={handleBatchDelete}>确认删除</button>
+              <button className="batch-toolbar-delete" onClick={() => handleBatchDelete(false)}>仅移除记录</button>
+              <button className="batch-toolbar-delete" onClick={() => handleBatchDelete(true)}>删除文件和记录</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 单个删除确认弹窗 */}
+      {deleteTarget && (
+        <div className="batch-confirm-backdrop" onClick={() => setDeleteTarget(null)}>
+          <div className="batch-confirm-dialog" onClick={e => e.stopPropagation()}>
+            <div className="batch-confirm-title">确认删除</div>
+            <div className="batch-confirm-msg">
+              确定要删除「{deleteTarget.title}」吗？请选择操作：
+            </div>
+            <div className="batch-confirm-actions">
+              <button className="genre-pill" onClick={() => setDeleteTarget(null)}>取消</button>
+              <button className="batch-toolbar-delete" onClick={() => confirmDelete(false)}>仅移除记录</button>
+              <button className="batch-toolbar-delete" onClick={() => confirmDelete(true)}>删除文件和记录</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── 剧集分组卡片 ─────────────────────────────────────────────────── */
+const SeriesCard: FC<{
+  group: SeriesGroup
+  index: number
+  batchMode: boolean
+  onDelete: (id: number, e: React.MouseEvent) => void
+  onPlay: (id: number, e: React.MouseEvent) => void
+}> = ({ group, index, batchMode, onDelete, onPlay }) => {
+  const [expanded, setExpanded] = useState(false)
+  const [imgError, setImgError] = useState(false)
+
+  const posterUrl = group.posterPath
+    ? (group.posterPath.startsWith('http')
+      ? group.posterPath
+      : `/api/local/file?path=${encodeURIComponent(group.posterPath)}`)
+    : null
+
+  return (
+    <div
+      className="poster-card series-card stagger-item"
+      style={{ '--stagger-index': Math.min(index, 10) } as React.CSSProperties}
+    >
+      {/* 海报图区 */}
+      <div className="poster-card-img-wrap" onClick={() => setExpanded(v => !v)}>
+        {posterUrl && !imgError ? (
+          <img
+            className="poster-img loaded"
+            src={posterUrl}
+            alt={group.title}
+            loading="lazy"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          <div className="poster-placeholder" style={{ flexDirection: 'column', gap: 6 }}>
+            <span className="poster-placeholder-icon">📺</span>
+            <span className="poster-placeholder-title">{group.title}</span>
+          </div>
+        )}
+
+        {/* 展开/折叠指示 */}
+        <div className="series-expand-indicator">
+          <svg
+            width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.25s ease' }}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </div>
+
+        {/* 删除按钮 */}
+        <button
+          className="local-card-delete-btn deleting"
+          onClick={(e) => onDelete(group.episodes[0].id, e)}
+          title="移除剧集"
+          style={{ opacity: 1, transform: 'scale(1)' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          </svg>
+        </button>
+
+        {/* 播放按钮（首集） */}
+        <button
+          className="local-card-play-btn"
+          onClick={(e) => onPlay(group.episodes[0].id, e)}
+          title="播放首集"
+          style={{ opacity: 1, transform: 'scale(1)' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+        </button>
+      </div>
+
+      {/* 信息区 */}
+      <div className="poster-info">
+        <div className="poster-title">{group.title}</div>
+        <div className="poster-year">
+          {group.year || '—'}
+          {' · '}
+          共 {group.episodes.length} 集
+          {group.totalSize > 0 && ` · ${formatSize(group.totalSize)}`}
+        </div>
+      </div>
+
+      {/* 展开的剧集列表 */}
+      {expanded && (
+        <div className="series-episode-list">
+          {group.episodes.map(ep => {
+            const epFilename = ep.local_path?.split(/[/\\]/).pop() || ep.local_path
+            return (
+              <div key={ep.id} className="series-episode-item">
+                <span className="series-episode-name" title={epFilename}>
+                  {epFilename}
+                </span>
+                {ep.file_size > 0 && (
+                  <span className="series-episode-size">{formatSize(ep.file_size)}</span>
+                )}
+                <button
+                  className="series-episode-play-btn"
+                  onClick={(e) => onPlay(ep.id, e)}
+                  title="播放"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                </button>
+                <button
+                  className="series-episode-delete-btn"
+                  onClick={(e) => onDelete(ep.id, e)}
+                  title="移除"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  </svg>
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
