@@ -194,3 +194,141 @@ export interface ApiWatcherStatus {
 export interface ApiWatcherAction {
   message?: string
 }
+
+// ─── Operation progress (polling-based) ─────────────────────────────
+
+export type ApiOperationStatus = 'running' | 'completed' | 'failed'
+
+export interface ApiOperationProgress {
+  id: string
+  status: ApiOperationStatus
+  total: number
+  current: number
+  description: string
+  message?: string
+  result?: unknown
+  error?: string
+  startedAt: number
+  completedAt?: number
+}
+
+// ─── Metadata scraping ──────────────────────────────────────────────
+
+export interface ApiScrapeRequest {
+  ids?: number[]
+}
+
+export interface ApiScrapeResult {
+  operationId: string
+  message: string
+}
+
+export interface ApiScrapePreview {
+  id: number
+  title: string
+  year: number | null
+  currentTmdbId: number | null
+  foundTmdbId: number | null
+  foundTitle: string | null
+  foundPoster: string | null
+  foundBackdrop: string | null
+  foundOverview: string | null
+  matchScore: 'high' | 'medium' | 'low' | 'none'
+}
+
+// ─── Subtitles ──────────────────────────────────────────────────────
+
+export interface ApiSubtitleSearchResult {
+  id: number
+  filename: string
+  downloadCount: number
+  language: string
+  languageCode: string
+  format: string
+  rating: number
+  uploader: string
+  url: string
+}
+
+export interface ApiSubtitleDownloadRequest {
+  mediaId: number
+  subtitleId: number
+}
+
+export interface ApiSubtitleDownloadResult {
+  success: boolean
+  filePath: string
+  message: string
+}
+
+export interface ApiSubtitleLanguage {
+  code: string
+  name: string
+  localName: string
+}
+
+// ─── File organization ──────────────────────────────────────────────
+
+export interface ApiRenameItem {
+  mediaId: number
+  oldPath: string
+  newPath: string
+}
+
+export interface ApiOrganizeRequest {
+  mediaIds?: number[]
+  targetRoot?: string
+  pattern?: string
+}
+
+export interface ApiRenamePreview {
+  operationId: string
+  items: ApiRenameItem[]
+  conflicts: { path: string; existingFile: boolean }[]
+}
+
+export interface ApiOrganizeResult {
+  operationId: string
+  success: boolean
+  renamed: number
+  failed: number
+  errors: string[]
+  message: string
+}
+
+// ─── Track management ───────────────────────────────────────────────
+
+export interface ApiMediaTrack {
+  index: number
+  type: 'video' | 'audio' | 'subtitle'
+  codec: string
+  language: string
+  title: string
+  default: boolean
+  forced: boolean
+  duration?: number
+  width?: number
+  height?: number
+  channels?: number
+  bitRate?: string
+}
+
+export interface ApiTrackHealthStatus {
+  available: boolean
+  version?: string
+  error?: string
+}
+
+export interface ApiTrackRemoveRequest {
+  mediaId: number
+  trackIndices: number[]
+}
+
+export interface ApiTrackRemoveResult {
+  operationId: string
+  success: boolean
+  originalSize: number
+  newSize: number
+  removedTracks: number
+  message: string
+}

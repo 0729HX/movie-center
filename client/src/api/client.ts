@@ -22,6 +22,21 @@ import type {
   ApiOmdbUsageItem,
   ApiWatcherStatus,
   ApiWatcherAction,
+  ApiOperationProgress,
+  ApiScrapeRequest,
+  ApiScrapeResult,
+  ApiScrapePreview,
+  ApiSubtitleSearchResult,
+  ApiSubtitleDownloadRequest,
+  ApiSubtitleDownloadResult,
+  ApiSubtitleLanguage,
+  ApiRenamePreview,
+  ApiOrganizeRequest,
+  ApiOrganizeResult,
+  ApiMediaTrack,
+  ApiTrackHealthStatus,
+  ApiTrackRemoveRequest,
+  ApiTrackRemoveResult,
 } from '../types/api'
 
 // ─── Error hierarchy ────────────────────────────────────────────────
@@ -212,6 +227,89 @@ export const api = {
 
     stop(signal?: AbortSignal): Promise<ApiWatcherAction> {
       return request('/watcher/stop', { method: 'POST', signal })
+    },
+  },
+
+  /** 元数据抓取 */
+  metadata: {
+    scrape(data: ApiScrapeRequest = {}, signal?: AbortSignal): Promise<ApiScrapeResult> {
+      return request('/metadata/scrape', { method: 'POST', body: data, signal })
+    },
+
+    status(operationId: string, signal?: AbortSignal): Promise<ApiOperationProgress> {
+      return request(`/metadata/status/${operationId}`, { signal })
+    },
+
+    preview(id: number, signal?: AbortSignal): Promise<ApiScrapePreview> {
+      return request(`/metadata/preview/${id}`, { signal })
+    },
+  },
+
+  /** 字幕管理 */
+  subtitles: {
+    languages(signal?: AbortSignal): Promise<{ languages: ApiSubtitleLanguage[]; configured: boolean }> {
+      return request('/subtitles/languages', { signal })
+    },
+
+    search(id: number, language?: string, signal?: AbortSignal): Promise<{ results: ApiSubtitleSearchResult[]; configured: boolean }> {
+      const params = new URLSearchParams()
+      if (language) params.set('language', language)
+      const qs = params.toString()
+      return request(`/subtitles/search/${id}${qs ? `?${qs}` : ''}`, { signal })
+    },
+
+    download(data: ApiSubtitleDownloadRequest, signal?: AbortSignal): Promise<ApiSubtitleDownloadResult> {
+      return request('/subtitles/download', { method: 'POST', body: data, signal })
+    },
+  },
+
+  /** 文件整理 */
+  organize: {
+    preview(ids?: number[], pattern?: string, signal?: AbortSignal): Promise<ApiRenamePreview> {
+      const params = new URLSearchParams()
+      if (ids && ids.length > 0) params.set('ids', ids.join(','))
+      if (pattern) params.set('pattern', pattern)
+      const qs = params.toString()
+      return request(`/organize/preview${qs ? `?${qs}` : ''}`, { signal })
+    },
+
+    rename(data: ApiOrganizeRequest, signal?: AbortSignal): Promise<ApiOrganizeResult> {
+      return request('/organize/rename', { method: 'POST', body: data, signal })
+    },
+
+    structure(data: ApiOrganizeRequest, signal?: AbortSignal): Promise<ApiOrganizeResult> {
+      return request('/organize/structure', { method: 'POST', body: data, signal })
+    },
+
+    rollback(operationId: string, signal?: AbortSignal): Promise<{ success: boolean; message: string }> {
+      return request(`/organize/rollback/${operationId}`, { method: 'POST', signal })
+    },
+  },
+
+  /** 轨道管理 */
+  tracks: {
+    health(signal?: AbortSignal): Promise<ApiTrackHealthStatus> {
+      return request('/tracks/health', { signal })
+    },
+
+    list(id: number, signal?: AbortSignal): Promise<{ tracks: ApiMediaTrack[] }> {
+      return request(`/tracks/${id}`, { signal })
+    },
+
+    remove(data: ApiTrackRemoveRequest, signal?: AbortSignal): Promise<ApiTrackRemoveResult> {
+      return request('/tracks/remove', { method: 'POST', body: data, signal })
+    },
+
+    preview(mediaId: number, indices: number[], signal?: AbortSignal): Promise<{ tracks: ApiMediaTrack[]; toRemove: number[]; toKeep: number[] }> {
+      const params = new URLSearchParams({
+        mediaId: String(mediaId),
+        indices: indices.join(','),
+      })
+      return request(`/tracks/preview?${params}`, { signal })
+    },
+
+    status(operationId: string, signal?: AbortSignal): Promise<ApiOperationProgress> {
+      return request(`/tracks/status/${operationId}`, { signal })
     },
   },
 } as const

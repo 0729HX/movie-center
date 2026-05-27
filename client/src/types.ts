@@ -29,6 +29,23 @@ export type {
   ApiOmdbUsageItem,
   ApiWatcherStatus,
   ApiWatcherAction,
+  ApiOperationProgress,
+  ApiOperationStatus,
+  ApiScrapeRequest,
+  ApiScrapeResult,
+  ApiScrapePreview,
+  ApiSubtitleSearchResult,
+  ApiSubtitleDownloadRequest,
+  ApiSubtitleDownloadResult,
+  ApiSubtitleLanguage,
+  ApiRenameItem,
+  ApiOrganizeRequest,
+  ApiRenamePreview,
+  ApiOrganizeResult,
+  ApiMediaTrack,
+  ApiTrackHealthStatus,
+  ApiTrackRemoveRequest,
+  ApiTrackRemoveResult,
 } from './types/api'
 
 // ─── Backward-compatible aliases (same shape, old names) ────────────

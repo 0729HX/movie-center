@@ -463,40 +463,6 @@ button {
   opacity: 0.9;
 }
 
-/* Poster card save button */
-.poster-card-save-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 15px;
-  background: rgba(0,0,0,0.45);
-  color: rgba(255,255,255,0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.12);
-  cursor: pointer;
-  transition: all 0.3s var(--ease-spring);
-  z-index: 2;
-  opacity: 0;
-  transform: scale(0.8);
-}
-.poster-card:hover .poster-card-save-btn,
-.poster-card-save-btn.animating {
-  opacity: 1;
-  transform: scale(1);
-}
-.poster-card-save-btn.saved {
-  color: #ff2d55;
-  border-color: rgba(255,45,85,0.3);
-  background: rgba(0,0,0,0.55);
-}
-
 /* Favorite badge */
 .poster-card-fav-badge {
   position: absolute;
@@ -562,23 +528,6 @@ button {
 }
 
 /* Local badge */
-.poster-card-local-badge {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #fff;
-  background: rgba(52, 199, 89, 0.85);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  z-index: 2;
-  pointer-events: none;
-  line-height: 1.4;
-}
-
 /* Genre filter pills */
 .genre-filter {
   display: flex;
@@ -632,26 +581,6 @@ button {
   aspect-ratio: 2/3;
 }
 
-/* Loading hint */
-.loading-hint {
-  text-align: center;
-  padding: 40px 0 16px;
-  color: var(--text-secondary);
-  font-size: 15px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-}
-
-/* Initial loading */
-.initial-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-  gap: 16px;
-}
-
 /* Button outline */
 .btn-outline {
   display: inline-flex;
@@ -689,56 +618,6 @@ button {
   cursor: default;
   transform: none;
   box-shadow: none;
-}
-
-/* Unified button base */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-family: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  border: none;
-  transition: all 0.25s var(--ease-spring);
-  white-space: nowrap;
-  user-select: none;
-}
-.btn:active {
-  transform: scale(0.97);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-  transform: none;
-}
-
-.btn-primary {
-  background: var(--accent);
-  color: #fff;
-}
-.btn-primary:hover {
-  background: var(--accent-hover);
-  box-shadow: 0 4px 16px rgba(0, 113, 227, 0.3);
-}
-
-.btn-ghost {
-  background: transparent;
-  color: var(--text-secondary);
-  border: 1.5px solid rgba(255,255,255,0.15);
-}
-.btn-ghost:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.btn-danger {
-  background: rgba(255, 59, 48, 0.8);
-  color: #fff;
-}
-.btn-danger:hover {
-  background: rgba(255, 59, 48, 1);
 }
 
 /* --- Hero Banner --- */
@@ -1537,14 +1416,6 @@ button {
   gap: 18px;
   overflow-x: auto;
   padding-bottom: 8px;
-}
-
-.modal-cast-scroll::-webkit-scrollbar {
-  height: 3px;
-}
-.modal-cast-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.08);
-  border-radius: 2px;
 }
 
 /* Cast cards */
