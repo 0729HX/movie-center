@@ -6,7 +6,7 @@
  * ffmpeg availability checked at startup.
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import fs from 'fs/promises';
 import { query } from '../db';
 import { startOperation, updateProgress, completeOperation, failOperation, generateOperationId } from './progress-tracker';
@@ -54,7 +54,7 @@ let ffmpegHealth: TrackHealthStatus = { available: false };
 
 export async function checkFfmpegHealth(): Promise<TrackHealthStatus> {
   return new Promise((resolve) => {
-    exec('ffmpeg -version', { timeout: 5000 }, (error, stdout) => {
+    execFile('ffmpeg', ['-version'], { timeout: 5000 }, (error, stdout) => {
       if (error) {
         ffmpegHealth = { available: false, error: error.message };
         console.warn('[TrackManager] ffmpeg not available:', error.message);
@@ -131,8 +131,7 @@ export async function listTracks(mediaId: number): Promise<MediaTrack[]> {
   if (!filePath) throw new Error('Media has no local file path');
 
   return new Promise((resolve, reject) => {
-    const cmd = `ffprobe -v quiet -print_format json -show_streams "${filePath}"`;
-    exec(cmd, { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout) => {
+    execFile('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_streams', filePath], { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout) => {
       if (error) {
         reject(new Error(`ffprobe failed: ${error.message}`));
         return;
@@ -195,12 +194,12 @@ export async function removeTracks(request: TrackRemoveRequest): Promise<TrackRe
     }
 
     const outputPath = filePath + '.tmp';
-    const cmd = `ffmpeg -y -i "${filePath}" ${mapArgs.join(' ')} -c copy "${outputPath}"`;
+    const ffmpegArgs = ['-y', '-i', filePath, ...mapArgs, '-c', 'copy', outputPath];
 
     updateProgress(operationId, 30, 'Running ffmpeg...');
 
     await new Promise<void>((resolve, reject) => {
-      exec(cmd, { timeout: 600000, maxBuffer: 10 * 1024 * 1024 }, (error) => {
+      execFile('ffmpeg', ffmpegArgs, { timeout: 600000, maxBuffer: 10 * 1024 * 1024 }, (error) => {
         if (error) {
           reject(new Error(`ffmpeg failed: ${error.message}`));
           return;

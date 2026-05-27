@@ -1,8 +1,54 @@
-import { createContext, useCallback, useContext, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useRef, type ReactNode } from 'react'
 import { DataContext } from './DataContext'
 import { api } from '../api/client'
+import type { MediaWithRatings } from '../types'
+import type { GenreItem } from '../reducers/dataReducer'
 
 const CACHE_TTL = 5 * 60 * 1000
+
+// ─── Request Deduplication & Stale-While-Revalidate Cache ─────────────
+
+interface CacheEntry<T> {
+  data: T
+  timestamp: number
+}
+
+// In-flight request deduplication map: key → Promise
+const inflightRequests = new Map<string, Promise<unknown>>()
+
+// Stale-while-revalidate cache
+const swrCache = new Map<string, CacheEntry<unknown>>()
+
+/**
+ * Deduplicates concurrent requests to the same URL.
+ * If a request for `key` is already in-flight, returns the same Promise.
+ * Otherwise, executes `fetcher`, stores the in-flight Promise, and cleans up on completion.
+ */
+async function dedupedRequest<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key) as Promise<T>
+  }
+  const promise = fetcher().finally(() => {
+    inflightRequests.delete(key)
+  })
+  inflightRequests.set(key, promise)
+  return promise
+}
+
+/**
+ * Stale-while-revalidate: returns cached data immediately if available,
+ * then fetches fresh data in the background and calls `onFresh` when ready.
+ */
+function getCached<T>(key: string, ttl: number): T | null {
+  const entry = swrCache.get(key) as CacheEntry<T> | undefined
+  if (!entry) return null
+  if (Date.now() - entry.timestamp > ttl) return null
+  return entry.data
+}
+
+function setCache(key: string, data: unknown): void {
+  swrCache.set(key, { data, timestamp: Date.now() })
+}
 
 interface AppContextValue {
   fetchTrending: () => Promise<void>
@@ -24,20 +70,31 @@ export const AppContext = createContext<AppContextValue>({} as AppContextValue)
 
 export function AppContextProvider({ children }: { children: ReactNode }) {
   const { state, dispatch } = useContext(DataContext)
+  // Track whether genres have been loaded to avoid re-fetching
+  const genresLoadedRef = useRef(false)
 
   const fetchTrending = useCallback(async () => {
+    const cacheKey = 'trending'
+    // SWR: serve cached data immediately
+    const cached = getCached<MediaWithRatings[]>(cacheKey, CACHE_TTL)
+    if (cached) {
+      dispatch({ type: 'SET_TRENDING', payload: cached })
+    }
     try {
-      const data = await api.trending.get()
-      dispatch({ type: 'SET_TRENDING', payload: data.items || [] })
+      const data = await dedupedRequest(cacheKey, () => api.trending.get())
+      const items = (data.items || []) as MediaWithRatings[]
+      setCache(cacheKey, items)
+      dispatch({ type: 'SET_TRENDING', payload: items })
     } catch (err: unknown) {
       console.error('fetchTrending 失败:', err instanceof Error ? err.message : err)
-      dispatch({ type: 'SET_TRENDING', payload: [] })
+      if (!cached) dispatch({ type: 'SET_TRENDING', payload: [] })
     }
   }, [dispatch])
 
   const fetchMovies = useCallback(async (pageNum = 1, genre = '') => {
+    const cacheKey = `movies:${pageNum}:${genre}`
     try {
-      const data = await api.movies.list(pageNum, genre)
+      const data = await dedupedRequest(cacheKey, () => api.movies.list(pageNum, genre))
       dispatch({
         type: 'SET_MOVIES',
         payload: { items: data.items || [], page: pageNum, totalPages: data.totalPages || 1 },
@@ -49,8 +106,9 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
   }, [dispatch])
 
   const fetchTv = useCallback(async (pageNum = 1, genre = '') => {
+    const cacheKey = `tv:${pageNum}:${genre}`
     try {
-      const data = await api.tv.list(pageNum, genre)
+      const data = await dedupedRequest(cacheKey, () => api.tv.list(pageNum, genre))
       dispatch({
         type: 'SET_TV',
         payload: { items: data.items || [], page: pageNum, totalPages: data.totalPages || 1 },
@@ -62,8 +120,9 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
   }, [dispatch])
 
   const fetchLocal = useCallback(async () => {
+    const cacheKey = 'local'
     try {
-      const data = await api.local.list()
+      const data = await dedupedRequest(cacheKey, () => api.local.list())
       dispatch({ type: 'SET_LOCAL', payload: data.items || [] })
     } catch (err: unknown) {
       console.error('fetchLocal 失败:', err instanceof Error ? err.message : err)
@@ -72,13 +131,27 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
   }, [dispatch])
 
   const fetchGenres = useCallback(async () => {
+    // Lazy load: skip if already loaded (non-critical data)
+    if (genresLoadedRef.current) return
+    const cacheKey = 'genres'
+    const cached = getCached<{ movieGenres: GenreItem[]; tvGenres: GenreItem[] }>(cacheKey, 24 * 60 * 60 * 1000)
+    if (cached) {
+      dispatch({ type: 'SET_MOVIE_GENRES', payload: cached.movieGenres })
+      dispatch({ type: 'SET_TV_GENRES', payload: cached.tvGenres })
+      genresLoadedRef.current = true
+      return
+    }
     try {
       const [mData, tData] = await Promise.all([
-        api.movies.genres(),
-        api.tv.genres(),
+        dedupedRequest('genres:movies', () => api.movies.genres()),
+        dedupedRequest('genres:tv', () => api.tv.genres()),
       ])
-      dispatch({ type: 'SET_MOVIE_GENRES', payload: mData.genres || [] })
-      dispatch({ type: 'SET_TV_GENRES', payload: tData.genres || [] })
+      const movieGenres = (mData.genres || []) as GenreItem[]
+      const tvGenres = (tData.genres || []) as GenreItem[]
+      setCache(cacheKey, { movieGenres, tvGenres })
+      dispatch({ type: 'SET_MOVIE_GENRES', payload: movieGenres })
+      dispatch({ type: 'SET_TV_GENRES', payload: tvGenres })
+      genresLoadedRef.current = true
     } catch {}
   }, [dispatch])
 
@@ -91,18 +164,26 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_LOADING', payload: true })
     dispatch({ type: 'SET_ERROR', payload: null })
     try {
-      const results = await Promise.allSettled([
+      // Critical data: load in parallel (trending, movies, tv, local)
+      const criticalResults = await Promise.allSettled([
         fetchTrending(),
         fetchMovies(1),
         fetchTv(1),
         fetchLocal(),
-        fetchGenres(),
       ])
-      const allFailed = results.every(r => r.status === 'rejected')
-      if (allFailed) {
+      const allCriticalFailed = criticalResults.every(r => r.status === 'rejected')
+      if (allCriticalFailed) {
         dispatch({ type: 'SET_ERROR', payload: '无法连接到服务器，请确认后端已启动（localhost:3001）' })
       } else {
         dispatch({ type: 'SET_LAST_FETCH_TIME', payload: now })
+      }
+
+      // Non-critical data: lazy load after first paint (genres)
+      // Use requestIdleCallback or setTimeout to defer
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(() => { fetchGenres() })
+      } else {
+        setTimeout(() => { fetchGenres() }, 0)
       }
     } catch (err: unknown) {
       console.error('loadAll 异常:', err instanceof Error ? err.message : err)
