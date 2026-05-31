@@ -363,12 +363,15 @@ export async function testConnection(): Promise<{ success: boolean; message: str
   }
 
   try {
+    // 使用 file/sort 端点验证 Cookie 有效性（member/info 已废弃）
     const result = await quarkFetch<any>(
-      `${QUARK_API_BASE}/member/info?pr=ucpro&fr=pc`,
+      `${QUARK_API_BASE}/file/sort?pr=ucpro&fr=pc&cat=&p=1&size=1`,
       config
     );
-    const nickname = result?.data?.nickname || '已连接';
-    return { success: true, message: `连接成功: ${nickname}`, nickname };
+    if (result?.status === 200 || result?.code === 0) {
+      return { success: true, message: '连接成功' };
+    }
+    return { success: false, message: `连接失败: ${result?.message || '未知错误'}` };
   } catch (err) {
     return { success: false, message: `连接失败: ${(err as Error).message}` };
   }
