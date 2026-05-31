@@ -144,19 +144,109 @@ interface CookieEntry {
 }
 
 /**
+ * 使用 Windows VSS（卷影复制）复制被锁定的文件
+ * 浏览器运行时会独占锁定 Cookie 数据库，普通复制无法读取
+ * VSS 可以创建文件系统的快照，从中读取文件的副本
+ */
+async function copyFileViaVss(src: string, dest: string): Promise<boolean> {
+  const { execSync } = await import('child_process');
+  const destDir = path.dirname(dest);
+
+  // 创建临时符号链接目录
+  const linkDir = path.join(destDir, '.vss_link_' + Date.now());
+
+  try {
+    // 通过 PowerShell 创建卷影副本并复制文件
+    const psScript = `
+      \$ErrorActionPreference = 'Stop'
+      \$src = '${src.replace(/\\/g, '\\\\')}'
+      \$dest = '${dest.replace(/\\/g, '\\\\')}'
+      \$destDir = '${destDir.replace(/\\/g, '\\\\')}'
+      \$linkDir = '${linkDir.replace(/\\/g, '\\\\')}'
+
+      if (!(Test-Path \$destDir)) { New-Item -ItemType Directory -Path \$destDir -Force | Out-Null }
+
+      # 创建卷影副本
+      \$drive = \$src.Substring(0, 2) + '\\'
+      \$shadow = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{Volume=\$drive; Context='ClientAccessible'}
+      if (-not \$shadow.ShadowID) { throw 'VSS 创建失败' }
+
+      # 等待卷影副本就绪
+      Start-Sleep -Milliseconds 500
+
+      # 获取最新卷影副本
+      \$shadows = Get-CimInstance Win32_ShadowCopy | Sort-Object InstallDate -Descending
+      \$latest = \$shadows[0]
+      \$device = \$latest.DeviceObject
+
+      # 创建符号链接访问卷影副本
+      cmd /c mklink /D "\$linkDir" "\$device" 2>&1 | Out-Null
+
+      try {
+        # 计算卷影副本中的文件路径
+        \$srcRelative = \$src.Substring(2) # 去掉盘符如 "C:"
+        \$shadowSrc = Join-Path \$linkDir \$srcRelative
+
+        if (Test-Path \$shadowSrc) {
+          Copy-Item \$shadowSrc \$dest -Force
+          Write-Output 'OK'
+        } else {
+          throw "卷影副本中未找到文件"
+        }
+      } finally {
+        # 清理符号链接
+        cmd /c rmdir "\$linkDir" 2>&1 | Out-Null
+      }
+    `;
+
+    const result = execSync(
+      `powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`,
+      { stdio: 'pipe', timeout: 30000, encoding: 'utf-8' },
+    );
+
+    return existsSync(dest);
+  } catch (err: any) {
+    console.warn('[VSS] 复制失败:', err.message?.substring(0, 200));
+    // 清理可能残留的符号链接
+    try { execSync(`cmd /c rmdir "${linkDir}" 2>nul`, { stdio: 'pipe' }); } catch {}
+    return false;
+  }
+}
+
+/**
  * 从 SQLite 数据库读取指定域名的 Cookie
+ * 支持浏览器运行时读取（通过共享读取模式复制文件）
  */
 async function readCookiesFromDb(
   dbPath: string,
   domain: string,
   key: Buffer,
 ): Promise<CookieEntry[]> {
-  // 复制数据库文件避免锁冲突（Chrome 运行时会锁定）
-  const tmpPath = dbPath + '.tmp';
+  const tmpDir = path.join(path.dirname(dbPath), '.cookie_tmp');
+  const tmpPath = path.join(tmpDir, 'Cookies');
+  const tmpWalPath = path.join(tmpDir, 'Cookies-wal');
+  const tmpShmPath = path.join(tmpDir, 'Cookies-shm');
+
   try {
-    await fs.copyFile(dbPath, tmpPath);
+    await fs.mkdir(tmpDir, { recursive: true });
+
+    // 使用 VSS 卷影复制绕过浏览器锁
+    const copied = await copyFileViaVss(dbPath, tmpPath);
+    if (!copied) {
+      throw new Error('无法复制 Cookie 数据库（VSS 失败）');
+    }
+
+    // 也复制 WAL 和 SHM 文件（Chrome 使用 WAL 模式）
+    const walPath = dbPath + '-wal';
+    const shmPath = dbPath + '-shm';
+    if (existsSync(walPath)) {
+      await copyFileViaVss(walPath, tmpWalPath).catch(() => {});
+    }
+    if (existsSync(shmPath)) {
+      await copyFileViaVss(shmPath, tmpShmPath).catch(() => {});
+    }
   } catch (err: any) {
-    throw new Error(`无法复制 Cookie 数据库 (浏览器可能正在运行，请关闭后重试): ${err.message}`);
+    throw new Error(`无法复制 Cookie 数据库: ${err.message}`);
   }
 
   try {
@@ -213,6 +303,9 @@ async function readCookiesFromDb(
   } finally {
     // 清理临时文件
     await fs.unlink(tmpPath).catch(() => {});
+    await fs.unlink(tmpWalPath).catch(() => {});
+    await fs.unlink(tmpShmPath).catch(() => {});
+    await fs.rmdir(tmpDir).catch(() => {});
   }
 }
 
