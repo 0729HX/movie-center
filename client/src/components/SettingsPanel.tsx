@@ -5,10 +5,20 @@ interface Settings {
   media_root: string
   tmdb_api_key: string
   omdb_api_key: string
+  opensubtitles_api_key: string
   tmm_path: string
   tmm_args: string
   watch_dir: string
   output_dir: string
+  // 下载相关
+  quark_cookie: string
+  quark_target_dir: string
+  aria2_rpc_url: string
+  aria2_rpc_secret: string
+  download_dir: string
+  max_concurrent_downloads: string
+  min_quality_score: string
+  prefer_quality: string
 }
 
 const SectionHeading: FC<{ icon: string; title: string }> = ({ icon, title }) => (
@@ -24,16 +34,28 @@ const SettingsPanel: FC = () => {
     media_root: '',
     tmdb_api_key: '95777cd0ce9652f08bd77103f658cf2b',
     omdb_api_key: '',
+    opensubtitles_api_key: '',
     tmm_path: '',
     tmm_args: '--scrape --updateAll',
     watch_dir: '',
     output_dir: '',
+    // 下载相关
+    quark_cookie: '',
+    quark_target_dir: '/影视',
+    aria2_rpc_url: 'http://localhost:6800/jsonrpc',
+    aria2_rpc_secret: '',
+    download_dir: '',
+    max_concurrent_downloads: '2',
+    min_quality_score: '25',
+    prefer_quality: '4K,BluRay,Remux',
   })
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const [watcherActive, setWatcherActive] = useState(false)
   const [watcherMsg, setWatcherMsg] = useState('')
   const [omdbUsage, setOmdbUsage] = useState<{ key: string; usage: number; limit: number; remaining: number }[]>([])
+  const [quarkTestResult, setQuarkTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [aria2TestResult, setAria2TestResult] = useState<{ available: boolean; version?: string; error?: string } | null>(null)
 
   const fetchOmdbUsage = useCallback(async () => {
     try {
@@ -51,10 +73,20 @@ const SettingsPanel: FC = () => {
           media_root: data.media_root || '',
           tmdb_api_key: data.tmdb_api_key || prev.tmdb_api_key,
           omdb_api_key: data.omdb_api_key || '',
+          opensubtitles_api_key: data.opensubtitles_api_key || '',
           tmm_path: data.tmm_path || '',
           tmm_args: data.tmm_args || prev.tmm_args,
           watch_dir: data.watch_dir || '',
           output_dir: data.output_dir || '',
+          // 下载相关
+          quark_cookie: data.quark_cookie || '',
+          quark_target_dir: data.quark_target_dir || '/影视',
+          aria2_rpc_url: data.aria2_rpc_url || 'http://localhost:6800/jsonrpc',
+          aria2_rpc_secret: data.aria2_rpc_secret || '',
+          download_dir: data.download_dir || '',
+          max_concurrent_downloads: data.max_concurrent_downloads || '2',
+          min_quality_score: data.min_quality_score || '25',
+          prefer_quality: data.prefer_quality || '4K,BluRay,Remux',
         }))
       })
       .catch(() => {})
@@ -173,6 +205,19 @@ const SettingsPanel: FC = () => {
         )}
       </div>
 
+      <div className="settings-group">
+        <label>OpenSubtitles API Key</label>
+        <input
+          type="text"
+          value={settings.opensubtitles_api_key}
+          onChange={e => update('opensubtitles_api_key', e.target.value)}
+          placeholder="留空则字幕搜索不可用"
+        />
+        <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 6 }}>
+          用于搜索和下载字幕。免费注册获取：<a href="https://www.opensubtitles.com/consumers" target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>opensubtitles.com</a>
+        </p>
+      </div>
+
       {/* === TMM 刮削 === */}
       <SectionHeading icon="🔄" title="TMM 自动刮削" />
       <div className="settings-group">
@@ -234,6 +279,142 @@ const SettingsPanel: FC = () => {
         </button>
       </div>
       {watcherMsg && <p className="watcher-msg">{watcherMsg}</p>}
+
+      {/* === 下载设置 === */}
+      <SectionHeading icon="⬇" title="下载设置" />
+      <div className="settings-group">
+        <label>夸克网盘 Cookie</label>
+        <textarea
+          className="settings-textarea"
+          value={settings.quark_cookie}
+          onChange={e => update('quark_cookie', e.target.value)}
+          placeholder="从浏览器开发者工具中复制 Cookie"
+          rows={3}
+        />
+        <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 6 }}>
+          登录夸克网盘后, 从浏览器 F12 → Network → 任意请求的 Cookie 头中复制
+        </p>
+      </div>
+
+      <div className="settings-group">
+        <label>夸克网盘目标目录</label>
+        <input
+          type="text"
+          value={settings.quark_target_dir}
+          onChange={e => update('quark_target_dir', e.target.value)}
+          placeholder="/影视"
+        />
+      </div>
+
+      <div className="settings-group">
+        <label>Aria2 RPC 地址</label>
+        <input
+          type="text"
+          value={settings.aria2_rpc_url}
+          onChange={e => update('aria2_rpc_url', e.target.value)}
+          placeholder="http://localhost:6800/jsonrpc"
+        />
+      </div>
+
+      <div className="settings-group">
+        <label>Aria2 RPC 密钥</label>
+        <input
+          type="text"
+          value={settings.aria2_rpc_secret}
+          onChange={e => update('aria2_rpc_secret', e.target.value)}
+          placeholder="留空则无密钥"
+        />
+      </div>
+
+      <div className="settings-group">
+        <label>本地下载目录</label>
+        <input
+          type="text"
+          value={settings.download_dir}
+          onChange={e => update('download_dir', e.target.value)}
+          placeholder="D:/downloads/movies"
+        />
+      </div>
+
+      <div className="settings-group" style={{ display: 'flex', gap: 16 }}>
+        <div style={{ flex: 1 }}>
+          <label>最大并发下载数</label>
+          <input
+            type="number"
+            min={1}
+            max={5}
+            value={settings.max_concurrent_downloads}
+            onChange={e => update('max_concurrent_downloads', e.target.value)}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label>最低质量分数</label>
+          <input
+            type="number"
+            min={0}
+            max={115}
+            value={settings.min_quality_score}
+            onChange={e => update('min_quality_score', e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="settings-group">
+        <label>优先质量关键词</label>
+        <input
+          type="text"
+          value={settings.prefer_quality}
+          onChange={e => update('prefer_quality', e.target.value)}
+          placeholder="4K,BluRay,Remux"
+        />
+        <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 6 }}>
+          逗号分隔, 匹配的资源额外加分优先下载
+        </p>
+      </div>
+
+      {/* 连接测试按钮 */}
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button
+          className="watcher-toggle-btn start"
+          onClick={async () => {
+            setQuarkTestResult(null)
+            try {
+              const res = await fetch('/api/download/test/quark')
+              const data = await res.json()
+              setQuarkTestResult(data)
+            } catch {
+              setQuarkTestResult({ success: false, message: '测试失败' })
+            }
+          }}
+        >
+          测试夸克连接
+        </button>
+        <button
+          className="watcher-toggle-btn start"
+          onClick={async () => {
+            setAria2TestResult(null)
+            try {
+              const res = await fetch('/api/download/test/aria2')
+              const data = await res.json()
+              setAria2TestResult(data)
+            } catch {
+              setAria2TestResult({ available: false, error: '测试失败' })
+            }
+          }}
+        >
+          测试 Aria2 连接
+        </button>
+      </div>
+      {quarkTestResult && (
+        <p className="watcher-msg" style={{ color: quarkTestResult.success ? '#4ade80' : '#f87171' }}>
+          {quarkTestResult.message}
+        </p>
+      )}
+      {aria2TestResult && (
+        <p className="watcher-msg" style={{ color: aria2TestResult.available ? '#4ade80' : '#f87171' }}>
+          {aria2TestResult.available ? `Aria2 ${aria2TestResult.version}` : `Aria2 不可用: ${aria2TestResult.error}`}
+        </p>
+      )}
 
       <button className="settings-save-btn" onClick={handleSave}>
         保存设置

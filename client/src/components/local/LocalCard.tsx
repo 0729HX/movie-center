@@ -112,6 +112,46 @@ const LocalCard: FC<Props> = ({ item, posterUrl, index, deleting, batchMode, sel
             )}
           </div>
         )}
+
+        {/* 下载状态标签 */}
+        {item.download_status && item.download_status !== 'none' && (
+          <div className="card-download-status">
+            {item.download_status === 'pending' && (
+              <span className="download-badge download-pending">⏳ 等待中</span>
+            )}
+            {item.download_status === 'searching' && (
+              <span className="download-badge download-searching">🔍 搜索资源中</span>
+            )}
+            {item.download_status === 'downloading' && (
+              <div className="download-progress-wrap">
+                <span className="download-badge download-downloading">
+                  ⬇ 下载中 {item.download_progress ? `${Math.round(item.download_progress)}%` : ''}
+                </span>
+                {item.download_progress > 0 && (
+                  <div className="download-progress-bar">
+                    <div
+                      className="download-progress-fill"
+                      style={{ width: `${item.download_progress}%` }}
+                    />
+                  </div>
+                )}
+                {item.download_quality && (
+                  <span className="download-quality-tag">{item.download_quality}</span>
+                )}
+              </div>
+            )}
+            {item.download_status === 'downloaded' && (
+              <span className="download-badge download-complete">
+                ✓ 已下载 {item.download_quality ? `(${item.download_quality})` : ''}
+              </span>
+            )}
+            {item.download_status === 'failed' && (
+              <span className="download-badge download-failed" title={item.download_error || ''}>
+                ✕ 下载失败
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

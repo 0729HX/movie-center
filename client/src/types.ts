@@ -46,6 +46,12 @@ export type {
   ApiTrackHealthStatus,
   ApiTrackRemoveRequest,
   ApiTrackRemoveResult,
+  ApiDownloadStatus,
+  ApiDownloadStatusResponse,
+  ApiDownloadQueueStatus,
+  ApiDownloadLogEntry,
+  ApiDownloadTestResult,
+  ApiAria2HealthResult,
 } from './types/api'
 
 // ─── Backward-compatible aliases (same shape, old names) ────────────

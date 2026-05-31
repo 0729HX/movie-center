@@ -7,6 +7,7 @@
  *   const detail = await api.detail.get('movie', 123)
  */
 
+import { showToast } from '../context/ToastContext'
 import type {
   ApiTrendingResponse,
   ApiMovieListResponse,
@@ -37,6 +38,11 @@ import type {
   ApiTrackHealthStatus,
   ApiTrackRemoveRequest,
   ApiTrackRemoveResult,
+  ApiDownloadStatusResponse,
+  ApiDownloadQueueStatus,
+  ApiDownloadLogEntry,
+  ApiDownloadTestResult,
+  ApiAria2HealthResult,
 } from '../types/api'
 
 // ─── Error hierarchy ────────────────────────────────────────────────
@@ -98,6 +104,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       throw new RequestAbortedError()
     }
     if (err instanceof TypeError) {
+      showToast('网络请求失败，请检查网络连接', 'error')
       throw new NetworkError()
     }
     throw err
@@ -105,6 +112,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    showToast(`请求失败: ${res.status} ${res.statusText}`, 'error')
     throw new ApiError(`请求失败: ${res.status} ${res.statusText}`, res.status, text)
   }
 
@@ -310,6 +318,54 @@ export const api = {
 
     status(operationId: string, signal?: AbortSignal): Promise<ApiOperationProgress> {
       return request(`/tracks/status/${operationId}`, { signal })
+    },
+  },
+
+  /** 下载管理 */
+  download: {
+    /** 加入下载队列 */
+    queue(localId: number, signal?: AbortSignal): Promise<{ success: boolean; status: string; message: string }> {
+      return request('/download/queue', { method: 'POST', body: { local_id: localId }, signal })
+    },
+
+    /** 批量加入队列 */
+    queueBatch(localIds: number[], signal?: AbortSignal): Promise<{ queued: number; skipped: number; messages: string[] }> {
+      return request('/download/queue/batch', { method: 'POST', body: { local_ids: localIds }, signal })
+    },
+
+    /** 获取队列状态 */
+    queueStatus(signal?: AbortSignal): Promise<ApiDownloadQueueStatus> {
+      return request('/download/queue', { signal })
+    },
+
+    /** 取消下载 */
+    cancel(localId: number, signal?: AbortSignal): Promise<{ success: boolean; message: string }> {
+      return request(`/download/queue/${localId}`, { method: 'DELETE', signal })
+    },
+
+    /** 重试失败下载 */
+    retry(localId: number, signal?: AbortSignal): Promise<{ queued: boolean; message: string }> {
+      return request(`/download/retry/${localId}`, { method: 'POST', signal })
+    },
+
+    /** 查询下载状态 */
+    status(localId: number, signal?: AbortSignal): Promise<ApiDownloadStatusResponse> {
+      return request(`/download/status/${localId}`, { signal })
+    },
+
+    /** 获取下载日志 */
+    log(limit = 50, signal?: AbortSignal): Promise<{ logs: ApiDownloadLogEntry[] }> {
+      return request(`/download/log?limit=${limit}`, { signal })
+    },
+
+    /** 测试夸克连接 */
+    testQuark(signal?: AbortSignal): Promise<ApiDownloadTestResult> {
+      return request('/download/test/quark', { signal })
+    },
+
+    /** 测试 Aria2 连接 */
+    testAria2(signal?: AbortSignal): Promise<ApiAria2HealthResult> {
+      return request('/download/test/aria2', { signal })
     },
   },
 } as const

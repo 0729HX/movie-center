@@ -116,6 +116,15 @@ export interface ApiLocalMedia {
   added_at: string
   last_played_at: string | null
   play_progress: number
+  // 下载相关字段
+  download_status?: 'none' | 'pending' | 'searching' | 'downloading' | 'downloaded' | 'failed'
+  download_progress?: number
+  download_quality?: string | null
+  download_error?: string | null
+  download_url?: string | null
+  aria2_gid?: string | null
+  download_started_at?: string | null
+  download_completed_at?: string | null
 }
 
 // ─── App config (server returns snake_case) ─────────────────────────
@@ -331,4 +340,52 @@ export interface ApiTrackRemoveResult {
   newSize: number
   removedTracks: number
   message: string
+}
+
+// ─── Download ──────────────────────────────────────────────────────
+
+export type ApiDownloadStatus = 'none' | 'pending' | 'searching' | 'downloading' | 'downloaded' | 'failed'
+
+export interface ApiDownloadStatusResponse {
+  download_status: ApiDownloadStatus
+  download_progress: number
+  download_quality: string | null
+  download_error: string | null
+  download_url: string | null
+  estimated_time?: string
+}
+
+export interface ApiDownloadQueueStatus {
+  queueLength: number
+  activeCount: number
+  maxConcurrent: number
+  items: Array<{ localId: number; title: string; enqueuedAt: number }>
+}
+
+export interface ApiDownloadLogEntry {
+  id: number
+  local_id: number
+  title: string
+  media_type: 'movie' | 'tv'
+  tmdb_id: number | null
+  quality: string | null
+  source_url: string | null
+  file_size: number
+  status: string
+  error_msg: string | null
+  aria2_gid: string | null
+  retry_count: number
+  started_at: string
+  completed_at: string | null
+}
+
+export interface ApiDownloadTestResult {
+  success: boolean
+  message: string
+}
+
+export interface ApiAria2HealthResult {
+  available: boolean
+  version?: string
+  error?: string
 }
