@@ -14,13 +14,41 @@ interface QuarkConfig {
   targetDir: string;
 }
 
+/**
+ * 清理 Cookie 值，移除无效的非 ASCII 字符
+ * v20 加密的 Cookie 值包含二进制数据，不能直接用于 HTTP 头
+ */
+function sanitizeCookie(raw: string): string {
+  if (!raw) return '';
+
+  const parts = raw.split(';').map(s => s.trim()).filter(Boolean);
+  const valid: string[] = [];
+
+  for (const part of parts) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+
+    const name = part.substring(0, eq).trim();
+    const value = part.substring(eq + 1).trim();
+
+    if (!value) continue;
+    // 跳过包含非 ASCII 字符的 Cookie（v20 加密数据）
+    if (/[\x00-\x1f\x7f-\xff]/.test(value)) continue;
+    if (/^v(10|11|20)/.test(value)) continue;
+
+    valid.push(`${name}=${value}`);
+  }
+
+  return valid.join('; ');
+}
+
 async function getConfig(): Promise<QuarkConfig> {
   const rows: any[] = await query(
     "SELECT `key`, `value` FROM config WHERE `key` IN ('quark_cookie', 'quark_target_dir')"
   );
   const map = new Map(rows.map((r: any) => [r.key, r.value]));
   return {
-    cookie: map.get('quark_cookie') || '',
+    cookie: sanitizeCookie(map.get('quark_cookie') || ''),
     targetDir: map.get('quark_target_dir') || '/影视',
   };
 }
