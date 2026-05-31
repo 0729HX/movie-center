@@ -1,9 +1,12 @@
 /**
  * 浏览器 Cookie 自动读取模块
- * 从本地 Chrome/Edge 浏览器的 SQLite 数据库中读取指定域名的 Cookie
  *
- * 支持: Chrome 80+, Edge 80+ (AES-256-GCM 加密)
- * 仅 Windows 平台
+ * v10/v11 Cookie: 使用 DPAPI + AES-256-GCM 解密
+ * v20 Cookie (Chrome v127+): 使用 App-Bound Encryption，需要 SYSTEM 权限，无法从用户进程解密
+ *
+ * 方案:
+ * 1. 浏览器关闭时 → 直接读取 SQLite 数据库并解密
+ * 2. 浏览器运行时 → 尝试 VSS 复制后读取；若全部 v20 加密则提示关闭浏览器
  */
 import path from 'path';
 import fs from 'fs/promises';
@@ -14,61 +17,38 @@ import crypto from 'crypto';
 
 interface BrowserInfo {
   name: string;
-  dataDir: string;
   cookieDbPath: string;
   localStatePath: string;
 }
 
-/** 获取常见的 Chromium 浏览器路径 */
 function getBrowserPaths(): BrowserInfo[] {
   const localAppData = process.env.LOCALAPPDATA || '';
-  const appData = process.env.APPDATA || '';
 
   const browsers: BrowserInfo[] = [];
 
-  // Chrome
-  const chromeData = path.join(localAppData, 'Google', 'Chrome', 'User Data');
-  if (existsSync(chromeData)) {
-    browsers.push({
-      name: 'Chrome',
-      dataDir: chromeData,
-      cookieDbPath: path.join(chromeData, 'Default', 'Network', 'Cookies'),
-      localStatePath: path.join(chromeData, 'Local State'),
-    });
-    // 也检查 Profile 1, Profile 2 等
+  const configs = [
+    { name: 'Chrome', dataDir: path.join(localAppData, 'Google', 'Chrome', 'User Data') },
+    { name: 'Edge', dataDir: path.join(localAppData, 'Microsoft', 'Edge', 'User Data') },
+    { name: 'Brave', dataDir: path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') },
+  ];
+
+  for (const cfg of configs) {
+    if (!existsSync(cfg.dataDir)) continue;
+
+    const defaultCookie = path.join(cfg.dataDir, 'Default', 'Network', 'Cookies');
+    const localState = path.join(cfg.dataDir, 'Local State');
+
+    if (existsSync(defaultCookie)) {
+      browsers.push({ name: cfg.name, cookieDbPath: defaultCookie, localStatePath: localState });
+    }
+
+    // 检查其他 Profile
     for (let i = 1; i <= 5; i++) {
-      const profilePath = path.join(chromeData, `Profile ${i}`, 'Network', 'Cookies');
-      if (existsSync(profilePath)) {
-        browsers.push({
-          name: `Chrome (Profile ${i})`,
-          dataDir: chromeData,
-          cookieDbPath: profilePath,
-          localStatePath: path.join(chromeData, 'Local State'),
-        });
+      const profileCookie = path.join(cfg.dataDir, `Profile ${i}`, 'Network', 'Cookies');
+      if (existsSync(profileCookie)) {
+        browsers.push({ name: `${cfg.name} (Profile ${i})`, cookieDbPath: profileCookie, localStatePath: localState });
       }
     }
-  }
-
-  // Edge
-  const edgeData = path.join(localAppData, 'Microsoft', 'Edge', 'User Data');
-  if (existsSync(edgeData)) {
-    browsers.push({
-      name: 'Edge',
-      dataDir: edgeData,
-      cookieDbPath: path.join(edgeData, 'Default', 'Network', 'Cookies'),
-      localStatePath: path.join(edgeData, 'Local State'),
-    });
-  }
-
-  // Brave
-  const braveData = path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data');
-  if (existsSync(braveData)) {
-    browsers.push({
-      name: 'Brave',
-      dataDir: braveData,
-      cookieDbPath: path.join(braveData, 'Default', 'Network', 'Cookies'),
-      localStatePath: path.join(braveData, 'Local State'),
-    });
   }
 
   return browsers;
@@ -76,59 +56,54 @@ function getBrowserPaths(): BrowserInfo[] {
 
 // ======================== DPAPI 解密 ========================
 
-/**
- * 使用 DPAPI 解密 Chrome 的加密密钥
- * Chrome v80+ 在 Local State 中存储 AES-256-GCM 密钥，用 DPAPI 加密
- */
-async function decryptChromeKey(localStatePath: string): Promise<Buffer> {
-  // 读取 Local State JSON
+async function decryptMasterKey(localStatePath: string): Promise<Buffer> {
+  const { Dpapi } = await import('@primno/dpapi');
   const content = await fs.readFile(localStatePath, 'utf-8');
   const localState = JSON.parse(content);
   const encryptedKeyB64 = localState.os_crypt?.encrypted_key;
+  if (!encryptedKeyB64) throw new Error('未找到加密密钥');
 
-  if (!encryptedKeyB64) {
-    throw new Error('未找到加密密钥 (os_crypt.encrypted_key)');
-  }
-
-  // Base64 解码，去掉 "DPAPI" 前缀 (5 字节)
   const encryptedKey = Buffer.from(encryptedKeyB64, 'base64');
-  const dpapiPayload = encryptedKey.subarray(5); // 跳过 "DPAPI" 前缀
+  const prefix = encryptedKey.subarray(0, 5).toString('ascii');
+  if (prefix !== 'DPAPI') throw new Error('密钥格式不正确');
 
-  // 使用 DPAPI 解密
-  const { Dpapi } = await import('@primno/dpapi');
-  const decryptedKey = Dpapi.unprotectData(dpapiPayload, null, 'CurrentUser');
-
-  return Buffer.from(decryptedKey);
+  const decrypted = Dpapi.unprotectData(encryptedKey.subarray(5), null, 'CurrentUser');
+  return Buffer.from(decrypted);
 }
 
 // ======================== Cookie 解密 ========================
 
-/**
- * 解密 Chrome v80+ 的 Cookie 值
- * 加密格式: v10/v11 + 12字节 nonce + ciphertext + 16字节 auth_tag
- */
-function decryptCookieValue(encryptedValue: Buffer, key: Buffer): string {
-  // Chrome v10/v11 格式
-  const version = encryptedValue.subarray(0, 3).toString('ascii');
+function decryptCookieValue(encryptedValue: Buffer, key: Buffer): string | null {
+  const prefix = encryptedValue.subarray(0, 3).toString('ascii');
 
-  if (version === 'v10' || version === 'v11') {
-    const nonce = encryptedValue.subarray(3, 15);
-    const ciphertext = encryptedValue.subarray(15, encryptedValue.length - 16);
-    const authTag = encryptedValue.subarray(encryptedValue.length - 16);
+  // v10/v11: AES-256-GCM with DPAPI key
+  if (prefix === 'v10' || prefix === 'v11') {
+    try {
+      const nonce = encryptedValue.subarray(3, 15);
+      const ciphertext = encryptedValue.subarray(15, encryptedValue.length - 16);
+      const authTag = encryptedValue.subarray(encryptedValue.length - 16);
 
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
-    decipher.setAuthTag(authTag);
-
-    let decrypted = decipher.update(ciphertext);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-
-    return decrypted.toString('utf-8');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+      decipher.setAuthTag(authTag);
+      let decrypted = decipher.update(ciphertext);
+      decrypted = Buffer.concat([decrypted, decipher.final()]);
+      return decrypted.toString('utf-8');
+    } catch {
+      return null;
+    }
   }
 
-  // 旧版 Chrome (v00 或无前缀) 使用 DPAPI 直接解密
-  const { Dpapi } = require('@primno/dpapi');
-  const decrypted = Dpapi.unprotectData(encryptedValue, null, 'CurrentUser');
-  return Buffer.from(decrypted).toString('utf-8');
+  // v20: App-Bound Encryption (Chrome v127+)，无法从用户进程解密
+  if (prefix === 'v20') {
+    return null;
+  }
+
+  // 无前缀: 可能是未加密的旧格式
+  try {
+    return encryptedValue.toString('utf-8');
+  } catch {
+    return null;
+  }
 }
 
 // ======================== 数据库读取 ========================
@@ -137,31 +112,90 @@ interface CookieEntry {
   name: string;
   value: string;
   domain: string;
-  path: string;
-  expiresUtc: number;
-  isSecure: boolean;
-  isHttpOnly: boolean;
 }
 
-/**
- * 使用 Windows VSS（卷影复制）复制被锁定的文件
- * 浏览器运行时会独占锁定 Cookie 数据库，普通复制无法读取
- * VSS 可以创建文件系统的快照，从中读取文件的副本
- */
+async function readCookiesFromDb(
+  dbPath: string,
+  domain: string,
+  key: Buffer,
+): Promise<{ cookies: CookieEntry[]; allEncrypted: boolean }> {
+  const tmpDir = path.join(path.dirname(dbPath), '.cookie_read_tmp');
+  const tmpPath = path.join(tmpDir, 'Cookies');
+
+  try {
+    await fs.mkdir(tmpDir, { recursive: true });
+
+    // 尝试直接复制（浏览器关闭时）
+    let copied = false;
+    try {
+      await fs.copyFile(dbPath, tmpPath);
+      copied = true;
+    } catch {
+      // 浏览器运行中，尝试 VSS
+      copied = await copyFileViaVss(dbPath, tmpPath);
+    }
+
+    if (!copied) {
+      throw new Error('无法复制 Cookie 数据库');
+    }
+
+    // 复制 WAL/SHM 文件
+    const walPath = dbPath + '-wal';
+    const shmPath = dbPath + '-shm';
+    try { await fs.copyFile(walPath, tmpPath + '-wal'); } catch {}
+    try { await fs.copyFile(shmPath, tmpPath + '-shm'); } catch {}
+
+    // 读取数据库
+    const Database = (await import('better-sqlite3')).default;
+    const db = new Database(tmpPath, { readonly: true });
+
+    try {
+      const rows = db.prepare(
+        "SELECT name, encrypted_value, host_key FROM cookies WHERE host_key LIKE ? OR host_key LIKE ?"
+      ).all(`%${domain}%`, `%.${domain}%`) as any[];
+
+      const cookies: CookieEntry[] = [];
+      let v20Count = 0;
+      let decryptedCount = 0;
+
+      for (const row of rows) {
+        const buf = Buffer.from(row.encrypted_value);
+        if (buf.length === 0) continue;
+
+        const prefix = buf.subarray(0, 3).toString('ascii');
+        if (prefix === 'v20') {
+          v20Count++;
+          continue; // 跳过 v20 加密的 Cookie
+        }
+
+        const value = decryptCookieValue(buf, key);
+        if (value) {
+          cookies.push({ name: row.name, value, domain: row.host_key });
+          decryptedCount++;
+        }
+      }
+
+      const allEncrypted = v20Count > 0 && decryptedCount === 0;
+      return { cookies, allEncrypted };
+    } finally {
+      db.close();
+    }
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// ======================== VSS 复制 ========================
+
 async function copyFileViaVss(src: string, dest: string): Promise<boolean> {
   const { execSync } = await import('child_process');
   const destDir = path.dirname(dest);
-
-  // 创建临时符号链接目录
   const linkDir = path.join(destDir, '.vss_link_' + Date.now());
   const scriptPath = path.join(destDir, '.vss_copy.ps1');
 
   try {
-    if (!(existsSync(destDir))) {
-      await fs.mkdir(destDir, { recursive: true });
-    }
+    await fs.mkdir(destDir, { recursive: true });
 
-    // 写入 PowerShell 脚本文件（避免命令行转义问题）
     const psScript = `
 $ErrorActionPreference = 'Stop'
 $src = '${src.replace(/'/g, "''")}'
@@ -171,33 +205,24 @@ $linkDir = '${linkDir.replace(/'/g, "''")}'
 
 if (!(Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
 
-# 创建卷影副本
 $drive = $src.Substring(0, 2) + '\\'
-$before = (Get-CimInstance Win32_ShadowCopy).Count
 $shadow = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{Volume=$drive; Context='ClientAccessible'}
 if (-not $shadow.ShadowID) { throw 'VSS failed' }
 
-# 等待卷影副本就绪（重试查找新创建的卷影）
 $device = $null
 for ($i = 0; $i -lt 10; $i++) {
   Start-Sleep -Milliseconds 500
   $shadows = Get-CimInstance Win32_ShadowCopy | Sort-Object InstallDate -Descending
   if ($shadows -and $shadows.Count -gt 0) {
-    $latest = $shadows[0]
-    $device = $latest.DeviceObject
+    $device = $shadows[0].DeviceObject
     if ($device) { break }
   }
 }
-if (-not $device) { throw 'VSS device not found after 5s' }
+if (-not $device) { throw 'VSS device not found' }
 
-# 创建符号链接访问卷影副本
 cmd /c mklink /D "$linkDir" "$device" 2>&1 | Out-Null
-
 try {
-  # 计算卷影副本中的文件路径
-  $srcRelative = $src.Substring(2)
-  $shadowSrc = Join-Path $linkDir $srcRelative
-
+  $shadowSrc = Join-Path $linkDir $src.Substring(2)
   if (Test-Path $shadowSrc) {
     Copy-Item $shadowSrc $dest -Force
     Write-Output 'OK'
@@ -210,115 +235,15 @@ try {
 `;
 
     await fs.writeFile(scriptPath, psScript, 'utf-8');
-
     execSync(
       `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`,
       { stdio: 'pipe', timeout: 30000, encoding: 'utf-8' },
     );
-
     return existsSync(dest);
-  } catch (err: any) {
-    console.warn('[VSS] 复制失败:', err.stderr?.toString()?.substring(0, 200) || err.message?.substring(0, 200));
-    // 清理可能残留的符号链接和脚本
+  } catch {
     try { execSync(`cmd /c rmdir "${linkDir}" 2>nul`, { stdio: 'pipe' }); } catch {}
     try { await fs.unlink(scriptPath); } catch {}
     return false;
-  }
-}
-
-/**
- * 从 SQLite 数据库读取指定域名的 Cookie
- * 支持浏览器运行时读取（通过共享读取模式复制文件）
- */
-async function readCookiesFromDb(
-  dbPath: string,
-  domain: string,
-  key: Buffer,
-): Promise<CookieEntry[]> {
-  const tmpDir = path.join(path.dirname(dbPath), '.cookie_tmp');
-  const tmpPath = path.join(tmpDir, 'Cookies');
-  const tmpWalPath = path.join(tmpDir, 'Cookies-wal');
-  const tmpShmPath = path.join(tmpDir, 'Cookies-shm');
-
-  try {
-    await fs.mkdir(tmpDir, { recursive: true });
-
-    // 使用 VSS 卷影复制绕过浏览器锁
-    const copied = await copyFileViaVss(dbPath, tmpPath);
-    if (!copied) {
-      throw new Error('无法复制 Cookie 数据库（VSS 失败）');
-    }
-
-    // 也复制 WAL 和 SHM 文件（Chrome 使用 WAL 模式）
-    const walPath = dbPath + '-wal';
-    const shmPath = dbPath + '-shm';
-    if (existsSync(walPath)) {
-      await copyFileViaVss(walPath, tmpWalPath).catch(() => {});
-    }
-    if (existsSync(shmPath)) {
-      await copyFileViaVss(shmPath, tmpShmPath).catch(() => {});
-    }
-  } catch (err: any) {
-    throw new Error(`无法复制 Cookie 数据库: ${err.message}`);
-  }
-
-  try {
-    const Database = (await import('better-sqlite3')).default;
-    const db = new Database(tmpPath, { readonly: true });
-
-    try {
-      // 查询域名匹配的 Cookie
-      const rows = db.prepare(`
-        SELECT name, encrypted_value, host_key, path, expires_utc, is_secure, is_httponly
-        FROM cookies
-        WHERE host_key LIKE ? OR host_key LIKE ?
-      `).all(`%${domain}%`, `%.${domain}%`) as any[];
-
-      const cookies: CookieEntry[] = [];
-
-      for (const row of rows) {
-        try {
-          const encryptedValue = row.encrypted_value;
-          if (!encryptedValue || encryptedValue.length === 0) continue;
-
-          let value: string;
-          // 检查是否加密 (有 v10/v11 前缀)
-          const buf = Buffer.from(encryptedValue);
-          const prefix = buf.subarray(0, 3).toString('ascii');
-          if (prefix === 'v10' || prefix === 'v11') {
-            value = decryptCookieValue(buf, key);
-          } else {
-            // 未加密或旧格式
-            value = buf.toString('utf-8');
-          }
-
-          if (value) {
-            cookies.push({
-              name: row.name,
-              value,
-              domain: row.host_key,
-              path: row.path,
-              // Chrome 时间戳: 微秒 since 1601-01-01
-              expiresUtc: row.expires_utc ? Math.floor(row.expires_utc / 1000000 - 11644473600) : 0,
-              isSecure: !!row.is_secure,
-              isHttpOnly: !!row.is_httponly,
-            });
-          }
-        } catch {
-          // 单个 Cookie 解密失败，跳过
-        }
-      }
-
-      return cookies;
-    } finally {
-      db.close();
-    }
-  } finally {
-    // 清理临时文件
-    await fs.unlink(tmpPath).catch(() => {});
-    await fs.unlink(tmpWalPath).catch(() => {});
-    await fs.unlink(tmpShmPath).catch(() => {});
-    await fs.rmdir(tmpDir).catch(() => {});
   }
 }
 
@@ -332,15 +257,102 @@ export interface BrowserCookieResult {
   error?: string;
 }
 
+// ======================== CDP 获取 Cookie ========================
+
+/**
+ * 通过 Chrome DevTools Protocol 从运行中的浏览器获取 Cookie
+ * 需要浏览器启动时带有 --remote-debugging-port 参数
+ */
+async function readCookieViaCDP(port: number): Promise<BrowserCookieResult> {
+  const http = await import('http');
+
+  // 检查 CDP 端口是否可用
+  const checkPort = (): Promise<boolean> =>
+    new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+        let d = '';
+        res.on('data', (c: Buffer) => d += c);
+        res.on('end', () => resolve(d.includes('Browser')));
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+    });
+
+  if (!(await checkPort())) return { success: false, error: '' };
+
+  try {
+    // 获取页面列表
+    const pages = await new Promise<any[]>((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/json`, (res) => {
+        let d = '';
+        res.on('data', (c: Buffer) => d += c);
+        res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve([]); } });
+      }).on('error', reject);
+    });
+
+    if (pages.length === 0) return { success: false, error: '' };
+
+    // 使用第一个页面的 WebSocket 获取 Cookie
+    const wsUrl = pages[0].webSocketDebuggerUrl;
+    if (!wsUrl) return { success: false, error: '' };
+
+    const { WebSocket } = await import('ws');
+    const cookies = await new Promise<any[]>((resolve, reject) => {
+      const ws = new WebSocket(wsUrl);
+      const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 5000);
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({
+          id: 1,
+          method: 'Network.getCookies',
+          params: { urls: ['https://quark.cn', 'https://pan.quark.cn', 'https://b.quark.cn', 'https://uop.quark.cn'] },
+        }));
+      });
+
+      ws.on('message', (data: any) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.id === 1) {
+            clearTimeout(timeout);
+            ws.close();
+            resolve(msg.result?.cookies || []);
+          }
+        } catch { /* ignore */ }
+      });
+
+      ws.on('error', (e: Error) => { clearTimeout(timeout); reject(e); });
+    });
+
+    if (cookies.length === 0) return { success: false, error: '' };
+
+    const domains = [...new Set(cookies.map((c: any) => c.domain))];
+    const cookieStr = cookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
+
+    console.log(`[BrowserCookie] 通过 CDP 获取到 ${cookies.length} 个 Cookie`);
+    return { success: true, browser: 'CDP', cookie: cookieStr, domains };
+  } catch {
+    return { success: false, error: '' };
+  }
+}
+
+// ======================== 主流程 ========================
+
 /**
  * 从本地浏览器读取夸克网盘 Cookie
- * 自动遍历所有 Chromium 浏览器配置文件
+ * 优先级: CDP (运行中) → SQLite 解密 (已关闭) → 提示手动复制
  */
 export async function readQuarkCookie(): Promise<BrowserCookieResult> {
   if (process.platform !== 'win32') {
     return { success: false, error: '浏览器 Cookie 读取仅支持 Windows 平台' };
   }
 
+  // 方案 1: 尝试 CDP 连接（浏览器带 --remote-debugging-port 运行时）
+  for (const port of [9222, 9223, 9224, 19222]) {
+    const cdpResult = await readCookieViaCDP(port);
+    if (cdpResult.success) return cdpResult;
+  }
+
+  // 方案 2: 尝试读取 SQLite 数据库（浏览器关闭时）
   const browsers = getBrowserPaths();
   if (browsers.length === 0) {
     return { success: false, error: '未找到 Chromium 浏览器 (Chrome/Edge/Brave)' };
@@ -348,79 +360,33 @@ export async function readQuarkCookie(): Promise<BrowserCookieResult> {
 
   for (const browser of browsers) {
     try {
-      // 读取并解密 AES 密钥
-      const key = await decryptChromeKey(browser.localStatePath);
+      const key = await decryptMasterKey(browser.localStatePath);
+      const { cookies, allEncrypted } = await readCookiesFromDb(browser.cookieDbPath, 'quark.cn', key);
 
-      // 读取 Cookie
-      const cookies = await readCookiesFromDb(browser.cookieDbPath, 'quark.cn', key);
+      if (allEncrypted) {
+        console.warn(`[BrowserCookie] ${browser.name}: 全部 v20 加密`);
+        continue;
+      }
 
       if (cookies.length === 0) continue;
 
-      // 组装 Cookie 字符串 (按 domain 分组)
       const domains = [...new Set(cookies.map(c => c.domain))];
-      const cookieStr = cookies
-        .map(c => `${c.name}=${c.value}`)
-        .join('; ');
-
-      // 验证是否包含关键 Cookie
-      const hasPuid = cookies.some(c => c.name === '__puus' || c.name === '__pus');
-      const hasMsessionid = cookies.some(c => c.name === 'MSESSIONID' || c.name === '__uid');
-
-      if (!hasPuid && !hasMsessionid) {
-        console.warn(`[BrowserCookie] ${browser.name}: 找到 ${cookies.length} 个夸克 Cookie，但缺少关键认证 Cookie`);
-      }
+      const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
 
       console.log(`[BrowserCookie] 从 ${browser.name} 读取到 ${cookies.length} 个夸克 Cookie`);
-      return {
-        success: true,
-        browser: browser.name,
-        cookie: cookieStr,
-        domains,
-      };
+      return { success: true, browser: browser.name, cookie: cookieStr, domains };
     } catch (err: any) {
       console.warn(`[BrowserCookie] ${browser.name} 读取失败: ${err.message}`);
-      // 继续尝试下一个浏览器
     }
   }
 
+  // 方案 3: 提示手动复制
   return {
     success: false,
-    error: '未在任何浏览器中找到夸克网盘 Cookie。请先在浏览器中登录夸克网盘 (pan.quark.cn)',
+    error: '浏览器 Cookie 使用 v20 加密无法自动解密。请手动复制：打开 pan.quark.cn → F12 → Network → 刷新 → 点任意请求 → 复制 Cookie 头',
   };
 }
 
-/**
- * 从本地浏览器读取指定域名的全部 Cookie (通用接口)
- */
 export async function readDomainCookies(domain: string): Promise<BrowserCookieResult> {
-  if (process.platform !== 'win32') {
-    return { success: false, error: '浏览器 Cookie 读取仅支持 Windows 平台' };
-  }
-
-  const browsers = getBrowserPaths();
-  if (browsers.length === 0) {
-    return { success: false, error: '未找到 Chromium 浏览器' };
-  }
-
-  for (const browser of browsers) {
-    try {
-      const key = await decryptChromeKey(browser.localStatePath);
-      const cookies = await readCookiesFromDb(browser.cookieDbPath, domain, key);
-
-      if (cookies.length === 0) continue;
-
-      const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-
-      return {
-        success: true,
-        browser: browser.name,
-        cookie: cookieStr,
-        domains: [...new Set(cookies.map(c => c.domain))],
-      };
-    } catch (err: any) {
-      console.warn(`[BrowserCookie] ${browser.name} 读取失败: ${err.message}`);
-    }
-  }
-
-  return { success: false, error: `未找到 ${domain} 的 Cookie` };
+  return readQuarkCookie();
 }
