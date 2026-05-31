@@ -54,6 +54,36 @@ export interface TmdbDetail {
   adult: boolean;
 }
 
+// === 下载相关类型 ===
+
+export type DownloadStatus = 'none' | 'pending' | 'searching' | 'downloading' | 'downloaded' | 'failed';
+
+export interface DownloadQueueItem {
+  localId: number;
+  title: string;
+  year: number | null;
+  mediaType: 'movie' | 'tv';
+  tmdbId: number | null;
+  enqueuedAt: number;
+}
+
+export interface DownloadLogEntry {
+  id: number;
+  local_id: number;
+  title: string;
+  media_type: 'movie' | 'tv';
+  tmdb_id: number | null;
+  quality: string | null;
+  source_url: string | null;
+  file_size: number;
+  status: string;
+  error_msg: string | null;
+  aria2_gid: string | null;
+  retry_count: number;
+  started_at: string;
+  completed_at: string | null;
+}
+
 export interface TmdbExternalIds {
   imdb_id: string | null;
   facebook_id: string | null;

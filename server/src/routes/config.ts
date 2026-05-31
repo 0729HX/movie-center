@@ -38,7 +38,13 @@ router.get('/omdb-usage', async (_req, res: TypedResponse<OmdbUsageStat[]>) => {
 router.put('/', async (req: TypedRequest<Record<string, string>, Record<string, string>>, res: TypedResponse<{ success: boolean }>) => {
   try {
     const updates: Record<string, string> = req.body;
-    const allowedKeys = ['potplayer_path', 'media_root', 'tmdb_api_key', 'omdb_api_key', 'tmm_path', 'tmm_args', 'watch_dir', 'output_dir'];
+    const allowedKeys = [
+      'potplayer_path', 'media_root', 'tmdb_api_key', 'omdb_api_key',
+      'opensubtitles_api_key', 'tmm_path', 'tmm_args', 'watch_dir', 'output_dir',
+      // 下载相关
+      'quark_cookie', 'quark_target_dir', 'aria2_rpc_url', 'aria2_rpc_secret',
+      'download_dir', 'max_concurrent_downloads', 'min_quality_score', 'prefer_quality',
+    ];
 
     for (const [key, value] of Object.entries(updates)) {
       if (allowedKeys.includes(key)) {
