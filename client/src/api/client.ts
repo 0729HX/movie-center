@@ -367,5 +367,9 @@ export const api = {
     testAria2(signal?: AbortSignal): Promise<ApiAria2HealthResult> {
       return request('/download/test/aria2', { signal })
     },
+
+    readBrowserCookie(signal?: AbortSignal): Promise<{ success: boolean; browser?: string; cookie?: string; domains?: string[]; error?: string }> {
+      return request('/download/browser-cookie', { signal })
+    },
   },
 } as const

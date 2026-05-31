@@ -56,6 +56,8 @@ const SettingsPanel: FC = () => {
   const [omdbUsage, setOmdbUsage] = useState<{ key: string; usage: number; limit: number; remaining: number }[]>([])
   const [quarkTestResult, setQuarkTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [aria2TestResult, setAria2TestResult] = useState<{ available: boolean; version?: string; error?: string } | null>(null)
+  const [browserCookieLoading, setBrowserCookieLoading] = useState(false)
+  const [browserCookieResult, setBrowserCookieResult] = useState<{ success: boolean; browser?: string; error?: string } | null>(null)
 
   const fetchOmdbUsage = useCallback(async () => {
     try {
@@ -288,11 +290,42 @@ const SettingsPanel: FC = () => {
           className="settings-textarea"
           value={settings.quark_cookie}
           onChange={e => update('quark_cookie', e.target.value)}
-          placeholder="从浏览器开发者工具中复制 Cookie"
+          placeholder="从浏览器开发者工具中复制 Cookie, 或点击下方按钮自动读取"
           rows={3}
         />
+        <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center' }}>
+          <button
+            className="watcher-toggle-btn start"
+            disabled={browserCookieLoading}
+            onClick={async () => {
+              setBrowserCookieLoading(true)
+              setBrowserCookieResult(null)
+              try {
+                const res = await fetch('/api/download/browser-cookie')
+                const data = await res.json()
+                if (data.success && data.cookie) {
+                  update('quark_cookie', data.cookie)
+                  setBrowserCookieResult({ success: true, browser: data.browser })
+                } else {
+                  setBrowserCookieResult({ success: false, error: data.error })
+                }
+              } catch {
+                setBrowserCookieResult({ success: false, error: '请求失败' })
+              } finally {
+                setBrowserCookieLoading(false)
+              }
+            }}
+          >
+            {browserCookieLoading ? '读取中...' : '从浏览器自动读取'}
+          </button>
+          {browserCookieResult && (
+            <span style={{ fontSize: 12, color: browserCookieResult.success ? '#4ade80' : '#f87171' }}>
+              {browserCookieResult.success ? `✓ 从 ${browserCookieResult.browser} 读取成功` : `✕ ${browserCookieResult.error}`}
+            </span>
+          )}
+        </div>
         <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 6 }}>
-          登录夸克网盘后, 从浏览器 F12 → Network → 任意请求的 Cookie 头中复制
+          自动读取需要关闭浏览器, 或手动从 F12 → Network → Cookie 头中复制
         </p>
       </div>
 

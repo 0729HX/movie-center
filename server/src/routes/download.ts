@@ -11,6 +11,7 @@ import {
   testQuarkConnection,
   aria2HealthCheck,
 } from '../services/download';
+import { readQuarkCookie } from '../services/download/browser-cookie';
 import { badRequest, notFound, internalError } from '../middleware/errorHandler';
 import type { TypedRequest, TypedResponse } from '../types/api';
 
@@ -179,6 +180,29 @@ router.get('/test/aria2', async (_req, res: TypedResponse<{ available: boolean; 
     res.json(result);
   } catch (err: unknown) {
     throw internalError('测试 Aria2 连接失败');
+  }
+});
+
+// ======================== 浏览器 Cookie ========================
+
+// 从本地浏览器自动读取夸克网盘 Cookie
+router.get('/browser-cookie', async (_req, res: TypedResponse<{ success: boolean; browser?: string; cookie?: string; domains?: string[]; error?: string }>) => {
+  try {
+    const result = await readQuarkCookie();
+
+    if (result.success && result.cookie) {
+      // 自动写入配置
+      await query(
+        "INSERT INTO config (`key`, `value`) VALUES ('quark_cookie', ?) ON DUPLICATE KEY UPDATE `value` = ?",
+        [result.cookie, result.cookie],
+      );
+    }
+
+    res.json(result);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : '未知错误';
+    console.error('[BrowserCookie] 读取失败:', message);
+    throw internalError(`读取浏览器 Cookie 失败: ${message}`);
   }
 });
 
