@@ -10,12 +10,15 @@ import tvRouter from './routes/tv';
 import searchRouter from './routes/search';
 import detailRouter from './routes/detail';
 import localRouter from './routes/local';
+import localPlaybackRouter from './routes/local-playback';
+import localRecentRouter from './routes/local-recent';
 import configRouter from './routes/config';
 import watcherRouter from './routes/watcher';
 import metadataRouter from './routes/metadata';
 import subtitlesRouter from './routes/subtitles';
 import organizeRouter from './routes/organize';
 import tracksRouter from './routes/tracks';
+import downloadRouter from './routes/download';
 import { checkFfmpegHealth } from './services/track-manager';
 
 const app = express();
@@ -31,6 +34,8 @@ app.use('/api/movies', moviesRouter);
 app.use('/api/tv', tvRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/detail', detailRouter);
+app.use('/api/local', localPlaybackRouter);
+app.use('/api/local', localRecentRouter);
 app.use('/api/local', localRouter);
 app.use('/api/config', configRouter);
 app.use('/api/watcher', watcherRouter);
@@ -38,6 +43,7 @@ app.use('/api/metadata', metadataRouter);
 app.use('/api/subtitles', subtitlesRouter);
 app.use('/api/organize', organizeRouter);
 app.use('/api/tracks', tracksRouter);
+app.use('/api/download', downloadRouter);
 
 // 本地海报文件服务（处理 Windows 绝对路径如 H:\movies\...）
 // 使用查询参数方式避免 URL 路径中的冒号问题
