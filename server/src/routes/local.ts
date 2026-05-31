@@ -2,8 +2,8 @@ import { Router } from 'express';
 import fs from 'fs/promises';
 import { query } from '../db';
 import { scanDirectory, getLocalMediaList, addToLocal, removeFromLocal } from '../services/scanner';
-import { playWithPotPlayer } from '../services/player';
-import { getDetail, getDetailFull, getCredits, getRecommendations, searchMedia } from '../services/tmdb';
+import { enqueue } from '../services/download';
+import { getDetailFull, searchMedia } from '../services/tmdb';
 import { cacheGet, cacheDel } from '../services/cache';
 import { badRequest, notFound, internalError } from '../middleware/errorHandler';
 import type { TypedRequest, TypedResponse, LocalMediaItem } from '../types/api';
@@ -177,10 +177,10 @@ router.post('/scan', async (req: TypedRequest<Record<string, string>, { path?: s
   }
 });
 
-// 从 TMDB 添加到本地收藏
-router.post('/save', async (req: TypedRequest<Record<string, string>, { tmdb_id: number; media_type: string; title?: string }>, res: TypedResponse<{ id: number; success: boolean }>) => {
+// 从 TMDB 添加到本地收藏 — 无本地文件时自动触发下载
+router.post('/save', async (req: TypedRequest<Record<string, string>, { tmdb_id: number; media_type: string; title?: string; year?: number }>, res: TypedResponse<{ id: number; success: boolean }>) => {
   try {
-    const { tmdb_id, media_type, title } = req.body;
+    const { tmdb_id, media_type, title, year } = req.body;
     if (!tmdb_id || !media_type) {
       throw badRequest('缺少必要参数');
     }
@@ -190,6 +190,17 @@ router.post('/save', async (req: TypedRequest<Record<string, string>, { tmdb_id:
 
     // 后台预热该影片的详情缓存（单次请求）
     getDetailFull(type, tmdb_id).catch(() => {});
+
+    // 检查是否有本地文件，无则自动触发下载
+    if (id > 0) {
+      const rows: any[] = await query('SELECT local_path, download_status FROM local_media WHERE id = ?', [id]);
+      if (rows.length > 0 && !rows[0].local_path && !rows[0].download_status) {
+        console.log(`[AutoDownload] 收藏触发下载: ${title} (${type}:${tmdb_id})`);
+        enqueue(id, title ?? '', year ?? null, type, tmdb_id).catch(err =>
+          console.error('[AutoDownload] 触发下载失败:', (err as Error).message)
+        );
+      }
+    }
 
     res.json({ id, success: true });
   } catch (err: unknown) {
@@ -340,82 +351,6 @@ router.get('/detail/:id', async (req: TypedRequest<{ id: string }>, res: TypedRe
     const message = err instanceof Error ? err.message : '未知错误';
     console.error('Local detail error:', message);
     throw internalError('获取本地详情失败');
-  }
-});
-
-// 播放本地媒体（同时更新 last_played_at）
-router.post('/play/:id', async (req: TypedRequest<{ id: string }>, res: TypedResponse<Record<string, unknown>>) => {
-  try {
-    const id = parseInt(req.params.id);
-    const rows: any[] = await query('SELECT local_path FROM local_media WHERE id = ?', [id]);
-
-    if (rows.length === 0) {
-      throw notFound('未找到该媒体');
-    }
-
-    // 更新最后播放时间
-    await query('UPDATE local_media SET last_played_at = NOW() WHERE id = ?', [id]);
-
-    const result = await playWithPotPlayer(rows[0].local_path);
-    res.json(result);
-  } catch (err: unknown) {
-    if (err instanceof Error && 'statusCode' in err) throw err;
-    const message = err instanceof Error ? err.message : '未知错误';
-    console.error('Play error:', message);
-    throw internalError(`播放失败: ${message}`);
-  }
-});
-
-// 上报播放进度
-router.post('/progress', async (req: TypedRequest<Record<string, unknown>, { id: number; seconds: number }>, res: TypedResponse<{ success: boolean }>) => {
-  try {
-    const { id, seconds } = req.body;
-    if (!id || typeof seconds !== 'number') {
-      throw badRequest('缺少必要参数 id 或 seconds');
-    }
-    await query('UPDATE local_media SET play_progress = ? WHERE id = ?', [Math.max(0, Math.floor(seconds)), id]);
-    res.json({ success: true });
-  } catch (err: unknown) {
-    if (err instanceof Error && 'statusCode' in err) throw err;
-    const message = err instanceof Error ? err.message : '未知错误';
-    console.error('Progress error:', message);
-    throw internalError('更新进度失败');
-  }
-});
-
-// 最近观看（继续观看）
-router.get('/recently-watched', async (_req, res: TypedResponse<{ items: LocalMediaItem[] }>) => {
-  try {
-    const rawItems: any[] = await query(
-      'SELECT * FROM local_media WHERE last_played_at IS NOT NULL ORDER BY last_played_at DESC LIMIT 10'
-    );
-
-    const items = rawItems.map((item: any) => ({
-      ...item,
-      nfo_ratings: item.nfo_ratings ? (typeof item.nfo_ratings === 'string' ? JSON.parse(item.nfo_ratings) : item.nfo_ratings) : null,
-      stream_info: item.stream_info ? (typeof item.stream_info === 'string' ? JSON.parse(item.stream_info) : item.stream_info) : null,
-      clearlogo_path: item.clearlogo_path || null,
-    }));
-
-    // 海报回退
-    const needPoster = items.filter((i) => !i.poster_path && i.tmdb_id && i.tmdb_id > 0);
-    if (needPoster.length > 0) {
-      await Promise.allSettled(needPoster.map(async (item) => {
-        try {
-          const cacheKey = `detail:${item.media_type}:${item.tmdb_id}`;
-          const cached: any = await cacheGet(cacheKey);
-          if (cached?.posterPath) {
-            item.poster_path = cached.posterPath;
-          }
-        } catch { /* skip */ }
-      }));
-    }
-
-    res.json({ items });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : '未知错误';
-    console.error('Recently watched error:', message);
-    throw internalError('获取最近观看失败');
   }
 });
 

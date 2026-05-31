@@ -406,3 +406,28 @@ export async function removeFromLocal(id: number): Promise<boolean> {
   const result: any = await query('DELETE FROM local_media WHERE id = ?', [id]);
   return result.affectedRows > 0;
 }
+
+/**
+ * 关联下载完成的文件到现有记录
+ * 下载完成后扫描目录时调用，将下载的文件路径回写到 local_media
+ */
+export async function linkDownload(
+  localId: number,
+  filePath: string,
+  fileSize: number,
+): Promise<boolean> {
+  try {
+    const result: any = await query(
+      `UPDATE local_media SET local_path = ?, file_size = ?, updated_at = NOW() WHERE id = ? AND (local_path IS NULL OR local_path = '')`,
+      [filePath, fileSize, localId],
+    );
+    if (result.affectedRows > 0) {
+      console.log(`[Scanner] 已关联下载文件: localId=${localId}, path=${filePath}`);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error(`[Scanner] 关联下载文件失败: localId=${localId}`, err);
+    return false;
+  }
+}

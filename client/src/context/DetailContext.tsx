@@ -51,6 +51,7 @@ export function DetailContextProvider({ children }: { children: ReactNode }) {
       tmdb_id: item.tmdbId,
       media_type: item.mediaType,
       title: item.title,
+      year: item.year ? parseInt(item.year) : undefined,
     })
     fetchLocal()
   }, [dispatch, fetchLocal])

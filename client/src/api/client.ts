@@ -177,7 +177,7 @@ export const api = {
     },
 
     save(
-      data: { tmdb_id: number; media_type: 'movie' | 'tv'; title: string },
+      data: { tmdb_id: number; media_type: 'movie' | 'tv'; title: string; year?: number },
       signal?: AbortSignal,
     ): Promise<unknown> {
       return request('/local/save', { method: 'POST', body: data, signal })

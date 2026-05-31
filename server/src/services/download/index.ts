@@ -128,6 +128,7 @@ function delay(ms: number): Promise<void> {
 async function processItem(item: DownloadQueueItem): Promise<void> {
   const config = await loadConfig();
   let retryCount = 0;
+  const triedShareUrls = new Set<string>(); // 记录已尝试过的分享链接
 
   const fail = async (error: string) => {
     console.error(`[Download] 任务失败: ${item.title} - ${error}`);
@@ -177,39 +178,65 @@ async function processItem(item: DownloadQueueItem): Promise<void> {
       return;
     }
 
-    const best = scored[0];
-    const qualityDesc = `${best.meta.resolution} ${best.meta.encoding} ${best.meta.audio}`;
+    // === Step 3-5: 逐个尝试资源，失败自动切换下一个 ===
+    for (let i = 0; i < scored.length; i++) {
+      const candidate = scored[i];
+      const qualityDesc = `${candidate.meta.resolution} ${candidate.meta.encoding} ${candidate.meta.audio}`;
 
-    console.log(`[Download] 选定资源: ${best.resource.title} (评分:${best.score}, ${qualityDesc})`);
+      // 跳过已尝试过的分享链接
+      if (triedShareUrls.has(candidate.resource.shareUrl)) continue;
+      triedShareUrls.add(candidate.resource.shareUrl);
 
-    // === Step 3: 转存到夸克网盘 ===
-    await updateDownloadStatus(item.localId, 'downloading', { quality: qualityDesc, url: best.resource.shareUrl });
-    await writeDownloadLog(item.localId, item.title, item.mediaType, item.tmdbId, 'transferring', {
-      quality: qualityDesc, url: best.resource.shareUrl, fileSize: best.resource.size,
-    });
+      console.log(`[Download] 尝试资源 (${i + 1}/${scored.length}): ${candidate.resource.title} (评分:${candidate.score}, ${qualityDesc})`);
 
-    const saveResult = await saveToDrive(best.resource.shareUrl);
+      try {
+        // === Step 3: 转存到夸克网盘 ===
+        await updateDownloadStatus(item.localId, 'downloading', {
+          quality: qualityDesc, url: candidate.resource.shareUrl,
+          progress: 0,
+        });
+        await writeDownloadLog(item.localId, item.title, item.mediaType, item.tmdbId, 'transferring', {
+          quality: qualityDesc, url: candidate.resource.shareUrl, fileSize: candidate.resource.size,
+        });
 
-    if (!saveResult.success || !saveResult.downloadUrl) {
-      await fail(`转存失败: ${saveResult.error || '未知原因'}`);
-      return;
+        const saveResult = await saveToDrive(candidate.resource.shareUrl);
+
+        if (!saveResult.success || !saveResult.downloadUrl) {
+          console.warn(`[Download] 转存失败，尝试下一个资源: ${saveResult.error || '未知原因'}`);
+          retryCount++;
+          continue; // 切换下一个资源
+        }
+
+        // === Step 4: 推送到 Aria2 ===
+        const gid = await addUri(saveResult.downloadUrl, {
+          dir: config.downloadDir || undefined,
+        });
+
+        await updateDownloadStatus(item.localId, 'downloading', {
+          gid, quality: qualityDesc, progress: 0,
+        });
+        await writeDownloadLog(item.localId, item.title, item.mediaType, item.tmdbId, 'downloading', {
+          quality: qualityDesc, url: saveResult.downloadUrl, fileSize: candidate.resource.size, gid,
+        });
+
+        // === Step 5: 轮询下载进度 ===
+        const downloadSuccess = await pollDownloadProgress(item, gid);
+
+        if (downloadSuccess) {
+          return; // 下载成功，退出
+        }
+
+        // 下载失败，尝试下一个资源
+        console.warn(`[Download] 下载失败，尝试下一个资源`);
+        retryCount++;
+      } catch (err) {
+        console.warn(`[Download] 资源处理异常，尝试下一个: ${(err as Error).message}`);
+        retryCount++;
+      }
     }
 
-    // === Step 4: 推送到 Aria2 ===
-    const gid = await addUri(saveResult.downloadUrl, {
-      dir: config.downloadDir || undefined,
-    });
-
-    await updateDownloadStatus(item.localId, 'downloading', {
-      gid, quality: qualityDesc, progress: 0,
-    });
-    await writeDownloadLog(item.localId, item.title, item.mediaType, item.tmdbId, 'downloading', {
-      quality: qualityDesc, url: saveResult.downloadUrl, fileSize: best.resource.size, gid,
-    });
-
-    // === Step 5: 轮询下载进度 ===
-    await pollDownloadProgress(item, gid);
-
+    // 所有资源都尝试过了
+    await fail(`所有 ${scored.length} 个资源均下载失败`);
   } catch (err) {
     await fail((err as Error).message);
   }
@@ -217,8 +244,9 @@ async function processItem(item: DownloadQueueItem): Promise<void> {
 
 /**
  * 轮询 Aria2 下载进度
+ * @returns true=下载成功, false=下载失败(可尝试下一个资源)
  */
-async function pollDownloadProgress(item: DownloadQueueItem, gid: string): Promise<void> {
+async function pollDownloadProgress(item: DownloadQueueItem, gid: string): Promise<boolean> {
   let lastProgress = 0;
   let staleCount = 0;
   const MAX_STALE = 60; // 连续 60 次无进展 (5分钟) 则认为卡住
@@ -239,16 +267,16 @@ async function pollDownloadProgress(item: DownloadQueueItem, gid: string): Promi
         triggerPostDownload(item).catch(err =>
           console.error('[Download] 后处理失败:', (err as Error).message)
         );
-        return;
+        return true;
       }
 
       // 下载失败或被移除
       if (status === 'error' || status === 'removed') {
         const detail = await getStatus(gid).catch(() => null);
         const errorMsg = detail?.errorMessage || `Aria2 状态: ${status}`;
-        await updateDownloadStatus(item.localId, 'failed', { error: errorMsg });
-        await writeDownloadLog(item.localId, item.title, item.mediaType, item.tmdbId, 'failed', { error: errorMsg, gid });
-        return;
+        console.warn(`[Download] Aria2 下载失败: ${item.title} - ${errorMsg}`);
+        // 不在这里标记 failed，让 processItem 决定是否切换资源
+        return false;
       }
 
       // 更新进度
@@ -281,13 +309,32 @@ async function triggerPostDownload(item: DownloadQueueItem): Promise<void> {
     console.log(`[Download] 触发目录扫描: ${scanDir}`);
     // 动态导入 scanner 避免循环依赖
     try {
-      const { scanDirectory } = await import('../scanner');
+      const { scanDirectory, linkDownload } = await import('../scanner');
       const scanResult = await scanDirectory(scanDir);
       console.log(`[Download] 扫描结果: 新增${scanResult.added}, 更新${scanResult.updated}`);
+
+      // 尝试将扫描到的新文件关联到下载记录
+      // 查找该 localId 没有关联 local_path 的记录，匹配扫描到的文件
+      if (scanResult.added > 0 || scanResult.updated > 0) {
+        const rows: any[] = await query(
+          'SELECT local_path, file_size FROM local_media WHERE download_status = ? AND title = ? ORDER BY updated_at DESC LIMIT 1',
+          ['downloaded', item.title],
+        );
+        if (rows.length > 0 && rows[0].local_path) {
+          // 已通过扫描关联到文件
+          console.log(`[Download] 文件已通过扫描关联: ${item.title} → ${rows[0].local_path}`);
+        }
+      }
     } catch (err) {
       console.error('[Download] 扫描失败:', (err as Error).message);
     }
   }
+
+  // 更新活跃下载统计
+  try {
+    const stats = getQueueStatus();
+    console.log(`[Download] 队列状态: 活跃=${stats.activeCount}, 等待=${stats.queueLength}, 并发上限=${stats.maxConcurrent}`);
+  } catch { /* skip */ }
 }
 
 // ======================== 队列调度 ========================
