@@ -154,61 +154,74 @@ async function copyFileViaVss(src: string, dest: string): Promise<boolean> {
 
   // 创建临时符号链接目录
   const linkDir = path.join(destDir, '.vss_link_' + Date.now());
+  const scriptPath = path.join(destDir, '.vss_copy.ps1');
 
   try {
-    // 通过 PowerShell 创建卷影副本并复制文件
+    if (!(existsSync(destDir))) {
+      await fs.mkdir(destDir, { recursive: true });
+    }
+
+    // 写入 PowerShell 脚本文件（避免命令行转义问题）
     const psScript = `
-      \$ErrorActionPreference = 'Stop'
-      \$src = '${src.replace(/\\/g, '\\\\')}'
-      \$dest = '${dest.replace(/\\/g, '\\\\')}'
-      \$destDir = '${destDir.replace(/\\/g, '\\\\')}'
-      \$linkDir = '${linkDir.replace(/\\/g, '\\\\')}'
+$ErrorActionPreference = 'Stop'
+$src = '${src.replace(/'/g, "''")}'
+$dest = '${dest.replace(/'/g, "''")}'
+$destDir = '${destDir.replace(/'/g, "''")}'
+$linkDir = '${linkDir.replace(/'/g, "''")}'
 
-      if (!(Test-Path \$destDir)) { New-Item -ItemType Directory -Path \$destDir -Force | Out-Null }
+if (!(Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
 
-      # 创建卷影副本
-      \$drive = \$src.Substring(0, 2) + '\\'
-      \$shadow = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{Volume=\$drive; Context='ClientAccessible'}
-      if (-not \$shadow.ShadowID) { throw 'VSS 创建失败' }
+# 创建卷影副本
+$drive = $src.Substring(0, 2) + '\\'
+$before = (Get-CimInstance Win32_ShadowCopy).Count
+$shadow = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{Volume=$drive; Context='ClientAccessible'}
+if (-not $shadow.ShadowID) { throw 'VSS failed' }
 
-      # 等待卷影副本就绪
-      Start-Sleep -Milliseconds 500
+# 等待卷影副本就绪（重试查找新创建的卷影）
+$device = $null
+for ($i = 0; $i -lt 10; $i++) {
+  Start-Sleep -Milliseconds 500
+  $shadows = Get-CimInstance Win32_ShadowCopy | Sort-Object InstallDate -Descending
+  if ($shadows -and $shadows.Count -gt 0) {
+    $latest = $shadows[0]
+    $device = $latest.DeviceObject
+    if ($device) { break }
+  }
+}
+if (-not $device) { throw 'VSS device not found after 5s' }
 
-      # 获取最新卷影副本
-      \$shadows = Get-CimInstance Win32_ShadowCopy | Sort-Object InstallDate -Descending
-      \$latest = \$shadows[0]
-      \$device = \$latest.DeviceObject
+# 创建符号链接访问卷影副本
+cmd /c mklink /D "$linkDir" "$device" 2>&1 | Out-Null
 
-      # 创建符号链接访问卷影副本
-      cmd /c mklink /D "\$linkDir" "\$device" 2>&1 | Out-Null
+try {
+  # 计算卷影副本中的文件路径
+  $srcRelative = $src.Substring(2)
+  $shadowSrc = Join-Path $linkDir $srcRelative
 
-      try {
-        # 计算卷影副本中的文件路径
-        \$srcRelative = \$src.Substring(2) # 去掉盘符如 "C:"
-        \$shadowSrc = Join-Path \$linkDir \$srcRelative
+  if (Test-Path $shadowSrc) {
+    Copy-Item $shadowSrc $dest -Force
+    Write-Output 'OK'
+  } else {
+    throw "File not found in shadow copy"
+  }
+} finally {
+  cmd /c rmdir "$linkDir" 2>&1 | Out-Null
+}
+`;
 
-        if (Test-Path \$shadowSrc) {
-          Copy-Item \$shadowSrc \$dest -Force
-          Write-Output 'OK'
-        } else {
-          throw "卷影副本中未找到文件"
-        }
-      } finally {
-        # 清理符号链接
-        cmd /c rmdir "\$linkDir" 2>&1 | Out-Null
-      }
-    `;
+    await fs.writeFile(scriptPath, psScript, 'utf-8');
 
-    const result = execSync(
-      `powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`,
+    execSync(
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`,
       { stdio: 'pipe', timeout: 30000, encoding: 'utf-8' },
     );
 
     return existsSync(dest);
   } catch (err: any) {
-    console.warn('[VSS] 复制失败:', err.message?.substring(0, 200));
-    // 清理可能残留的符号链接
+    console.warn('[VSS] 复制失败:', err.stderr?.toString()?.substring(0, 200) || err.message?.substring(0, 200));
+    // 清理可能残留的符号链接和脚本
     try { execSync(`cmd /c rmdir "${linkDir}" 2>nul`, { stdio: 'pipe' }); } catch {}
+    try { await fs.unlink(scriptPath); } catch {}
     return false;
   }
 }
