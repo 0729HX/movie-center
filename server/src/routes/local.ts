@@ -194,7 +194,7 @@ router.post('/save', async (req: TypedRequest<Record<string, string>, { tmdb_id:
     // 检查是否有本地文件，无则自动触发下载
     if (id > 0) {
       const rows: any[] = await query('SELECT local_path, download_status FROM local_media WHERE id = ?', [id]);
-      if (rows.length > 0 && !rows[0].local_path && !rows[0].download_status) {
+      if (rows.length > 0 && !rows[0].local_path && (!rows[0].download_status || rows[0].download_status === 'none')) {
         console.log(`[AutoDownload] 收藏触发下载: ${title} (${type}:${tmdb_id})`);
         enqueue(id, title ?? '', year ?? null, type, tmdb_id).catch(err =>
           console.error('[AutoDownload] 触发下载失败:', (err as Error).message)

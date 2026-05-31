@@ -127,7 +127,7 @@ const LocalCard: FC<Props> = ({ item, posterUrl, index, deleting, batchMode, sel
                 <span className="download-badge download-downloading">
                   ⬇ 下载中 {item.download_progress ? `${Math.round(item.download_progress)}%` : ''}
                 </span>
-                {item.download_progress > 0 && (
+                {(item.download_progress ?? 0) > 0 && (
                   <div className="download-progress-bar">
                     <div
                       className="download-progress-fill"

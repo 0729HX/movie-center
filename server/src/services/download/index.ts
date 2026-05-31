@@ -105,13 +105,15 @@ async function writeDownloadLog(
   status: string,
   extra?: { quality?: string; url?: string; fileSize?: number; error?: string; gid?: string; retryCount?: number },
 ): Promise<void> {
+  const isTerminal = ['completed', 'failed', 'cancelled'].includes(status);
   await query(
-    `INSERT INTO download_log (local_id, title, media_type, tmdb_id, quality, source_url, file_size, status, error_msg, aria2_gid, retry_count)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO download_log (local_id, title, media_type, tmdb_id, quality, source_url, file_size, status, error_msg, aria2_gid, retry_count, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       localId, title, mediaType, tmdbId,
       extra?.quality || null, extra?.url || null, extra?.fileSize || 0,
       status, extra?.error || null, extra?.gid || null, extra?.retryCount || 0,
+      isTerminal ? new Date() : null,
     ],
   );
 }
@@ -249,10 +251,20 @@ async function processItem(item: DownloadQueueItem): Promise<void> {
 async function pollDownloadProgress(item: DownloadQueueItem, gid: string): Promise<boolean> {
   let lastProgress = 0;
   let staleCount = 0;
+  let totalPolls = 0;
   const MAX_STALE = 60; // 连续 60 次无进展 (5分钟) 则认为卡住
+  const MAX_TOTAL_POLLS = 17280; // 最大轮询次数 (24小时, 5秒/次)
 
   while (true) {
     await delay(PROGRESS_POLL_INTERVAL);
+    totalPolls++;
+
+    // 总超时保护
+    if (totalPolls >= MAX_TOTAL_POLLS) {
+      console.warn(`[Download] 下载超时 (24h): ${item.title}, gid=${gid}`);
+      try { await remove(gid); } catch {}
+      return false;
+    }
 
     try {
       const { progress, speed, status } = await getProgress(gid);
@@ -275,7 +287,6 @@ async function pollDownloadProgress(item: DownloadQueueItem, gid: string): Promi
         const detail = await getStatus(gid).catch(() => null);
         const errorMsg = detail?.errorMessage || `Aria2 状态: ${status}`;
         console.warn(`[Download] Aria2 下载失败: ${item.title} - ${errorMsg}`);
-        // 不在这里标记 failed，让 processItem 决定是否切换资源
         return false;
       }
 
@@ -287,8 +298,9 @@ async function pollDownloadProgress(item: DownloadQueueItem, gid: string): Promi
       } else {
         staleCount++;
         if (staleCount >= MAX_STALE) {
-          console.warn(`[Download] 下载疑似卡住: ${item.title}, gid=${gid}`);
-          staleCount = 0;
+          console.warn(`[Download] 下载卡住 (5min无进展): ${item.title}, gid=${gid}`);
+          try { await remove(gid); } catch {}
+          return false;
         }
       }
     } catch (err) {

@@ -138,6 +138,15 @@ export interface ApiAppConfig {
   tmm_args?: string
   watch_dir?: string
   output_dir?: string
+  // 下载配置
+  quark_cookie?: string
+  quark_target_dir?: string
+  aria2_rpc_url?: string
+  aria2_rpc_secret?: string
+  download_dir?: string
+  max_concurrent_downloads?: string
+  min_quality_score?: string
+  prefer_quality?: string
 }
 
 // ─── Genre ──────────────────────────────────────────────────────────
